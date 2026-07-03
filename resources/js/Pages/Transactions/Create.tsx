@@ -354,7 +354,7 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
         } finally {
             setIsClosingSession(false);
         }
-    }, [closingCashPhysical, closingNotes, data.cart.length, reset, sessionState, expectedCash, settlementDifference, settlementStatus, auth?.user?.name]);
+    }, [data.cart.length, closingCashPhysical, closingNotes, reset, setSearch]);
 
     const handleSaveDraft = useCallback(async () => {
         if (data.cart.length === 0) return;
