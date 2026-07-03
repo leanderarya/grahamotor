@@ -19,19 +19,19 @@ Route::middleware(['auth:sanctum', 'kasir-only'])->group(function () {
 
     // Cashier session
     Route::get('/session', [SessionController::class, 'status']);
-    Route::post('/session/open', [SessionController::class, 'open']);
-    Route::post('/session/close', [SessionController::class, 'close']);
+    Route::post('/session/open', [SessionController::class, 'open'])->middleware('throttle:10,1');
+    Route::post('/session/close', [SessionController::class, 'close'])->middleware('throttle:10,1');
 
     // Transactions
-    Route::post('/transactions', [TransactionController::class, 'store']);
+    Route::post('/transactions', [TransactionController::class, 'store'])->middleware('throttle:30,1');
     Route::get('/transactions/{transaction}', [TransactionController::class, 'show']);
     Route::get('/recap', [TransactionController::class, 'recap']);
     Route::get('/history', [TransactionController::class, 'history']);
     Route::post('/transactions/{transaction}/void', [TransactionController::class, 'void']);
 
     // Drafts
-    Route::post('/draft', [DraftController::class, 'save']);
-    Route::put('/draft/auto-save', [DraftController::class, 'autoSave']);
-    Route::post('/draft/clear', [DraftController::class, 'clear']);
+    Route::post('/draft', [DraftController::class, 'save'])->middleware('throttle:30,1');
+    Route::put('/draft/auto-save', [DraftController::class, 'autoSave'])->middleware('throttle:60,1');
+    Route::post('/draft/clear', [DraftController::class, 'clear'])->middleware('throttle:30,1');
     Route::delete('/draft/{transaction}', [DraftController::class, 'destroy']);
 });
