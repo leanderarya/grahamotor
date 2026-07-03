@@ -9,7 +9,14 @@ class Asset extends Model
 {
     use HasFactory;
 
-    protected $guarded = ['id'];
+    protected $fillable = [
+        'name',
+        'purchase_date',
+        'price',
+        'condition',
+        'location',
+        'note',
+    ];
 
     protected $casts = [
         'purchase_date' => 'date',

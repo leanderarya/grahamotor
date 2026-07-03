@@ -7,7 +7,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class StockAdjustment extends Model
 {
-    protected $guarded = ['id'];
+    protected $fillable = [
+        'product_id',
+        'user_id',
+        'adjustment_date',
+        'system_stock',
+        'physical_stock',
+        'difference',
+        'type',
+        'note',
+    ];
 
     // Relasi
     public function product(): BelongsTo
