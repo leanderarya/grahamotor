@@ -1,21 +1,38 @@
 import { isNative } from '@/lib/capacitor';
+import { secureStorage } from '@/lib/secure-storage';
 
 const API_BASE = '/api';
+const TOKEN_KEY = 'kasir_token';
 
-function getToken(): string | null {
-    return localStorage.getItem('kasir_token');
+async function getToken(): Promise<string | null> {
+    if (isNative()) {
+        await secureStorage.init();
+        return secureStorage.get(TOKEN_KEY);
+    }
+    return localStorage.getItem(TOKEN_KEY);
 }
 
-export function setToken(token: string): void {
-    localStorage.setItem('kasir_token', token);
+export async function setToken(token: string): Promise<void> {
+    if (isNative()) {
+        await secureStorage.init();
+        await secureStorage.set(TOKEN_KEY, token);
+    } else {
+        localStorage.setItem(TOKEN_KEY, token);
+    }
 }
 
-export function clearToken(): void {
-    localStorage.removeItem('kasir_token');
+export async function clearToken(): Promise<void> {
+    if (isNative()) {
+        await secureStorage.init();
+        await secureStorage.remove(TOKEN_KEY);
+    } else {
+        localStorage.removeItem(TOKEN_KEY);
+    }
 }
 
 export function hasToken(): boolean {
-    return getToken() !== null;
+    // For sync checks, use localStorage
+    return localStorage.getItem(TOKEN_KEY) !== null;
 }
 
 interface ApiOptions {
@@ -29,7 +46,7 @@ async function request<T = any>(
     options: ApiOptions = {},
 ): Promise<T> {
     const { method = 'GET', body, headers = {} } = options;
-    const token = getToken();
+    const token = await getToken();
 
     const fetchHeaders: Record<string, string> = {
         Accept: 'application/json',
@@ -49,7 +66,7 @@ async function request<T = any>(
 
     if (!response.ok) {
         if (response.status === 401) {
-            clearToken();
+            await clearToken();
             window.location.href = '/pin-login';
             throw new Error('Unauthorized');
         }

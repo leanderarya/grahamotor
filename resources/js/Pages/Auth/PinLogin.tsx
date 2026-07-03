@@ -32,7 +32,7 @@ export default function PinLogin() {
             apiClient
                 .post('/login', { pin: value })
                 .then(async (data) => {
-                    setToken(data.token);
+                    await setToken(data.token);
                     // Also create web session so Capacitor can load web pages
                     try {
                         // Get CSRF token first
