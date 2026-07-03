@@ -8,6 +8,7 @@ use App\Services\CashierSessionService;
 use App\Services\TransactionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class TransactionController extends Controller
@@ -46,14 +47,25 @@ class TransactionController extends Controller
         } catch (ValidationException $e) {
             throw $e;
         } catch (\Exception $e) {
+            Log::error('Transaction store failed', [
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json([
-                'message' => 'Terjadi kesalahan sistem: '.$e->getMessage(),
+                'message' => 'Terjadi kesalahan sistem. Silakan coba lagi.',
             ], 500);
         }
     }
 
     public function show(Transaction $transaction): JsonResponse
     {
+        // Ownership check: kasir can only view their own transactions
+        if (auth()->id() !== $transaction->user_id) {
+            return response()->json(['message' => 'Akses ditolak.'], 403);
+        }
+
         $transaction->load(['transactionItems.product', 'user']);
 
         return response()->json([
@@ -115,6 +127,11 @@ class TransactionController extends Controller
 
     public function void(Request $request, Transaction $transaction): JsonResponse
     {
+        // Ownership check
+        if (auth()->id() !== $transaction->user_id) {
+            return response()->json(['message' => 'Akses ditolak.'], 403);
+        }
+
         $request->validate([
             'reason' => ['required', 'string', 'max:500'],
         ]);
