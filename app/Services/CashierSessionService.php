@@ -3,8 +3,8 @@
 namespace App\Services;
 
 use App\Models\CashierSession;
+use App\Models\Transaction;
 use Carbon\Carbon;
-use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Validation\ValidationException;
 
 class CashierSessionService
@@ -57,6 +57,9 @@ class CashierSessionService
             ]);
         }
 
+        // Safety: Recalculate totals from actual transactions before closing
+        $this->recalculateSessionTotals($session);
+
         $expectedCash = (float) $session->opening_cash + (float) $session->cash_sales_total;
         $difference = $closingCashPhysical - $expectedCash;
 
@@ -69,6 +72,23 @@ class CashierSessionService
         ]);
 
         return $this->closingReport->buildReport($session);
+    }
+
+    /**
+     * Recalculate session totals from actual paid transactions.
+     * Safety net against incremental update drift.
+     */
+    private function recalculateSessionTotals(CashierSession $session): void
+    {
+        $paidTransactions = Transaction::where('cashier_session_id', $session->id)
+            ->where('status', 'paid')
+            ->get();
+
+        $session->update([
+            'transactions_count' => $paidTransactions->count(),
+            'cash_sales_total' => (float) $paidTransactions->where('payment_method', 'cash')->sum('total_amount'),
+            'non_cash_sales_total' => (float) $paidTransactions->where('payment_method', '!=', 'cash')->sum('total_amount'),
+        ]);
     }
 
     /**
