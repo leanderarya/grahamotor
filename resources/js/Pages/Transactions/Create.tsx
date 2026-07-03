@@ -25,6 +25,8 @@ import { CheckoutPanel } from '@/Components/pos/checkout-panel';
 import { PrintReceipt } from '@/Components/pos/print-receipt';
 import { STORE_CONFIG } from '@/config/store';
 import { useNetwork } from '@/hooks/useNetwork';
+import { productCache } from '@/lib/product-cache';
+import { isNative } from '@/lib/capacitor';
 import * as posService from '@/services/pos';
 import type { ClosingReportData } from '@/lib/printer';
 
@@ -51,10 +53,31 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
     const [closingData, setClosingData] = useState<ClosingReportData | null>(null);
     const [showClosingReport, setShowClosingReport] = useState(false);
     const [autoSaveFailedCount, setAutoSaveFailedCount] = useState(0);
+    const [offlineProducts, setOfflineProducts] = useState<Product[]>([]);
 
     // Data sources
-    const activeProducts = products;
+    const activeProducts = products.length > 0 ? products : offlineProducts;
     const activeDraftData = activeDraft;
+
+    // Offline product cache (Capacitor only)
+    useEffect(() => {
+        if (!isNative()) return;
+
+        const loadProducts = async () => {
+            try {
+                const result = await posService.fetchAndCacheProducts();
+                if (result.length > 0) {
+                    setOfflineProducts(result as Product[]);
+                }
+            } catch {
+                // Network failed, load from cache
+                const cached = await productCache.load();
+                setOfflineProducts(cached as Product[]);
+            }
+        };
+
+        loadProducts();
+    }, []);
 
     useEffect(() => {
         setSessionState(cashierSession ?? null);

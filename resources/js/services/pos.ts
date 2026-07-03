@@ -9,6 +9,7 @@ import { route } from 'ziggy-js';
 import { isNative } from '@/lib/capacitor';
 import { getCsrfToken } from '@/lib/csrf';
 import { apiClient } from '@/api/client';
+import { productCache } from '@/lib/product-cache';
 
 // ── Session ──────────────────────────────────────────────────────────────────
 
@@ -153,4 +154,43 @@ export async function voidTransaction(
         return;
     }
     router.post(route('transactions.void', transactionId), { reason });
+}
+
+// ── Product Cache ────────────────────────────────────────────────────────────
+
+interface CachedProduct {
+    id: number;
+    sku: string;
+    name: string;
+    category: string | null;
+    image_url: string | null;
+    volume_liter: number | null;
+    stock: number;
+    sell_price: number;
+    workshop_price: number | null;
+    display_name: string;
+    min_stock?: number;
+}
+
+export async function fetchAndCacheProducts(): Promise<CachedProduct[]> {
+    if (!isNative()) {
+        return [];
+    }
+
+    try {
+        const data = await apiClient.get<{ products: CachedProduct[] }>('/products');
+        const products = data.products || [];
+
+        // Cache for offline use
+        await productCache.save(products);
+
+        return products;
+    } catch {
+        // If fetch fails, try to load from cache
+        return productCache.load();
+    }
+}
+
+export async function getOfflineProducts(): Promise<CachedProduct[]> {
+    return productCache.load();
 }
