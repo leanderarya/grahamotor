@@ -27,6 +27,7 @@ import { STORE_CONFIG } from '@/config/store';
 import { useNetwork } from '@/hooks/useNetwork';
 import { productCache } from '@/lib/product-cache';
 import { isNative } from '@/lib/capacitor';
+import { useVersionCheck } from '@/hooks/useVersionCheck';
 import * as posService from '@/services/pos';
 import type { ClosingReportData } from '@/lib/printer';
 
@@ -54,6 +55,7 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
     const [showClosingReport, setShowClosingReport] = useState(false);
     const [autoSaveFailedCount, setAutoSaveFailedCount] = useState(0);
     const [offlineProducts, setOfflineProducts] = useState<Product[]>([]);
+    const { needsUpdate, latestVersion } = useVersionCheck();
 
     // Data sources
     const activeProducts = products.length > 0 ? products : offlineProducts;
@@ -399,6 +401,19 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
             <div className="flex h-screen flex-col bg-white">
             <Head title="Kasir - Graha Motor" />
             <AppNotifications flash={flash} />
+
+            {/* Update banner */}
+            {needsUpdate && (
+                <div className="bg-amber-500 px-4 py-2 text-center text-sm font-semibold text-white">
+                    Versi baru tersedia (v{latestVersion}).
+                    <button
+                        onClick={() => window.location.reload()}
+                        className="ml-2 underline"
+                    >
+                        Muat Ulang
+                    </button>
+                </div>
+            )}
 
             {/* Top Bar */}
             <TopBar
