@@ -7,6 +7,7 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
@@ -16,20 +17,20 @@ class AuthController extends Controller
             'pin' => ['required', 'digits:4'],
         ]);
 
-        $user = User::where('pin', $request->pin)
-            ->where('role', 'kasir')
+        $user = User::where('role', 'kasir')
+            ->whereNotNull('pin')
             ->first();
 
-        if (! $user) {
+        if (! $user || ! Hash::check($request->pin, $user->pin)) {
             return response()->json([
                 'message' => 'PIN salah.',
             ], 401);
         }
 
-        // Revoke previous tokens for this user (single device)
+        // Revoke previous tokens (single device)
         $user->tokens()->delete();
 
-        $token = $user->createToken('kasir-android')->plainTextToken;
+        $token = $user->createToken('kasir-android', ['*'], now()->addDays(30))->plainTextToken;
 
         return response()->json([
             'token' => $token,

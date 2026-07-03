@@ -53,7 +53,7 @@ class User extends Authenticatable implements FilamentUser
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
-            'pin' => 'string',
+            'pin' => 'hashed',
             'two_factor_confirmed_at' => 'datetime',
         ];
     }

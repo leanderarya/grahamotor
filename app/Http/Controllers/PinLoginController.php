@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
 use Inertia\Inertia;
 
 class PinLoginController extends Controller
@@ -20,12 +21,12 @@ class PinLoginController extends Controller
             'pin' => ['required', 'digits:4'],
         ]);
 
-        // Cari user kasir berdasarkan PIN
-        $user = User::where('pin', $request->pin)
-            ->where('role', 'kasir')
+        // Find kasir user — PIN comparison is now done via Hash::check
+        $user = User::where('role', 'kasir')
+            ->whereNotNull('pin')
             ->first();
 
-        if (! $user) {
+        if (! $user || ! Hash::check($request->pin, $user->pin)) {
             return back()->withErrors([
                 'pin' => 'PIN salah. Silakan coba lagi.',
             ]);
