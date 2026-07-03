@@ -3,6 +3,7 @@ import {
     notifyError,
     notifyWarning,
 } from '@/Components/app-notifications';
+import { ErrorBoundary } from '@/Components/ErrorBoundary';
 import { Head, useForm, usePage } from '@inertiajs/react';
 import {
     useCallback,
@@ -359,7 +360,8 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
     }, [data.cart, customerType, draftId]);
 
     return (
-        <div className="flex h-screen flex-col bg-white">
+        <ErrorBoundary>
+            <div className="flex h-screen flex-col bg-white">
             <Head title="Kasir - Graha Motor" />
             <AppNotifications flash={flash} />
 
@@ -469,5 +471,6 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
                 storePhone={STORE_CONFIG.phone}
             />
         </div>
+        </ErrorBoundary>
     );
 }

@@ -4,6 +4,7 @@ import { createInertiaApp } from '@inertiajs/react';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ErrorBoundary } from '@/Components/ErrorBoundary';
 import { initializeTheme } from './hooks/use-appearance';
 import { useAndroidBackButton } from './hooks/useAndroidBackButton';
 import { useStatusBar } from './hooks/useStatusBar';
@@ -32,7 +33,9 @@ createInertiaApp({
 
         root.render(
             <StrictMode>
-                <AppWithAndroidOptimizations />
+                <ErrorBoundary>
+                    <AppWithAndroidOptimizations />
+                </ErrorBoundary>
             </StrictMode>,
         );
     },
