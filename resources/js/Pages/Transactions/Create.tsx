@@ -50,6 +50,7 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
     const { isOnline } = useNetwork();
     const [closingData, setClosingData] = useState<ClosingReportData | null>(null);
     const [showClosingReport, setShowClosingReport] = useState(false);
+    const [autoSaveFailedCount, setAutoSaveFailedCount] = useState(0);
 
     // Data sources
     const activeProducts = products;
@@ -86,6 +87,7 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
                 try {
                     await posService.clearDraft(draftId);
                     setDraftId(null);
+                    setAutoSaveFailedCount(0);
                 } catch (_) {}
                 return;
             }
@@ -98,13 +100,23 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
                     draftId,
                 );
                 if (result?.draft_id) setDraftId(result.draft_id);
-            } catch (_) {}
+                setAutoSaveFailedCount(0);
+            } catch (_) {
+                setAutoSaveFailedCount(prev => {
+                    const next = prev + 1;
+                    // Show toast after 3 consecutive failures
+                    if (next >= 3) {
+                        notifyError('Auto-save gagal. Pastikan koneksi internet stabil.');
+                    }
+                    return next;
+                });
+            }
         }, 800);
 
         return () => {
             if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
         };
-    }, [data.cart, customerType, sessionState]);
+    }, [data.cart, customerType, sessionState, draftId]);
 
     const hasOpenSession = Boolean(sessionState?.id);
     const isWorkshop = customerType === 'workshop';
