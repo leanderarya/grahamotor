@@ -18,7 +18,7 @@ class DashboardTest extends TestCase
     public function test_authenticated_staff_users_are_redirected_to_pos_from_dashboard()
     {
         $this->actingAs(User::factory()->create([
-            'role' => 'staff',
+            'role' => 'kasir',
         ]));
 
         $this->get(route('dashboard'))

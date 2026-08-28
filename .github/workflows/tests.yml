@@ -9,6 +9,21 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: testing
+          MYSQL_USER: testing
+          MYSQL_PASSWORD: testing
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u testing -ptesting"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
     steps:
       - uses: actions/checkout@v4
 
@@ -37,8 +52,8 @@ jobs:
         run: |
           cp .env.example .env
           php artisan key:generate
-          touch database/database.sqlite
-          php -r "file_put_contents('.env', PHP_EOL.'DB_CONNECTION=sqlite'.PHP_EOL.'DB_DATABASE='.getcwd().'/database/database.sqlite'.PHP_EOL, FILE_APPEND);"
+          # MySQL service is configured above
+          php -r "file_put_contents('.env', PHP_EOL.'DB_CONNECTION=mysql'.PHP_EOL.'DB_HOST=127.0.0.1'.PHP_EOL.'DB_PORT=3306'.PHP_EOL.'DB_DATABASE=testing'.PHP_EOL.'DB_USERNAME=testing'.PHP_EOL.'DB_PASSWORD=testing'.PHP_EOL, FILE_APPEND);"
           php artisan migrate --force
 
       - name: Run tests
