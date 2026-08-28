@@ -260,8 +260,8 @@ class MonthlySalesReportImporter
 
             $transaction->save();
 
-            $transaction->items()->delete();
-            $transaction->items()->createMany($items);
+            $transaction->transactionItems()->delete();
+            $transaction->transactionItems()->createMany($items);
         });
 
         return [
