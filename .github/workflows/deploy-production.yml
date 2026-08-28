@@ -119,7 +119,7 @@ jobs:
             git pull --ff-only origin main
              rm -rf public/build
              mkdir -p public/build
-             cp -a "$build"/. public/build/
+             cp -a "$build"/public-build/. public/build/
             composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
             php artisan migrate --force
             php artisan storage:link
