@@ -57,9 +57,8 @@ jobs:
       - name: Prepare env
         run: |
           cp .env.example .env
+          printf '\nDB_CONNECTION=mysql\nDB_HOST=127.0.0.1\nDB_PORT=3306\nDB_DATABASE=testing\nDB_USERNAME=testing\nDB_PASSWORD=testing\n' >> .env
           php artisan key:generate
-          # MySQL service is configured above
-          php -r "file_put_contents('.env', PHP_EOL.'DB_CONNECTION=mysql'.PHP_EOL.'DB_HOST=127.0.0.1'.PHP_EOL.'DB_PORT=3306'.PHP_EOL.'DB_DATABASE=testing'.PHP_EOL.'DB_USERNAME=testing'.PHP_EOL.'DB_PASSWORD=testing'.PHP_EOL, FILE_APPEND);"
           php artisan migrate --force
 
       - name: Run tests
