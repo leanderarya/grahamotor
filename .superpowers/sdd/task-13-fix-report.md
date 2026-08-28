@@ -14,7 +14,7 @@ Both workflows use MySQL 8.0, database `testing`, user/password `testing`, host 
 
 ## Fix
 
-Added migration `database/migrations/2026_08_28_000000_expand_pin_column_for_hashes.php` changing `users.pin` to `VARCHAR(255)`, matching production deploy's existing schema-change command and allowing bcrypt hashes. Down migration restores original width.
+Added migration `database/migrations/2026_08_28_000000_expand_pin_column_for_hashes.php` changing `users.pin` to nullable `VARCHAR(255)`, matching production deploy's existing schema-change command and allowing bcrypt hashes while preserving non-PIN user fixtures. Down migration restores original width.
 
 ## Verification
 
