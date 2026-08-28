@@ -147,11 +147,6 @@ return [
         // Features::registration(),  // Disabled — admin creates users via Filament
         Features::resetPasswords(),
         Features::emailVerification(),
-        Features::twoFactorAuthentication([
-            'confirm' => true,
-            'confirmPassword' => true,
-            // 'window' => 0
-        ]),
     ],
 
 ];
