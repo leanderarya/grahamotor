@@ -12,11 +12,15 @@ return new class extends Migration
             ->whereNotIn('role', ['admin', 'staff'])
             ->update(['role' => 'staff']);
 
-        DB::statement("ALTER TABLE users MODIFY role ENUM('admin', 'staff') NOT NULL DEFAULT 'staff'");
+        if (DB::connection()->getDriverName() === 'mysql') {
+            DB::statement("ALTER TABLE users MODIFY role ENUM('admin', 'staff') NOT NULL DEFAULT 'staff'");
+        }
     }
 
     public function down(): void
     {
-        DB::statement('ALTER TABLE users MODIFY role VARCHAR(255) NOT NULL DEFAULT "staff"');
+        if (DB::connection()->getDriverName() === 'mysql') {
+            DB::statement('ALTER TABLE users MODIFY role VARCHAR(255) NOT NULL DEFAULT "staff"');
+        }
     }
 };

@@ -13,12 +13,16 @@ return new class extends Migration
             ->update(['role' => 'kasir']);
 
         // Then modify the ENUM to remove 'staff'
-        DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM('admin', 'kasir') NOT NULL DEFAULT 'kasir'");
+        if (DB::connection()->getDriverName() === 'mysql') {
+            DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM('admin', 'kasir') NOT NULL DEFAULT 'kasir'");
+        }
     }
 
     public function down(): void
     {
         // Re-add 'staff' to ENUM
-        DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM('admin', 'staff', 'kasir') NOT NULL DEFAULT 'kasir'");
+        if (DB::connection()->getDriverName() === 'mysql') {
+            DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM('admin', 'staff', 'kasir') NOT NULL DEFAULT 'kasir'");
+        }
     }
 };
