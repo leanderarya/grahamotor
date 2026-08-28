@@ -80,6 +80,11 @@ class Transaction extends Model
         return $this->hasMany(TransactionItem::class);
     }
 
+    public function items()
+    {
+        return $this->transactionItems();
+    }
+
     public function reportMonth(): Carbon
     {
         return Carbon::parse($this->created_at)->startOfMonth();
