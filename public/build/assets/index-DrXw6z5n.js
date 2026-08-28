@@ -1,0 +1,2 @@
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/web-Dck4zOyy.js","assets/index-CUb6lIim.js"])))=>i.map(i=>d[i]);
+import{_ as r}from"./app-BipVYPpk.js";import{r as o}from"./index-CUb6lIim.js";/* empty css            */const u=o("SecureStoragePlugin",{web:()=>r(()=>import("./web-Dck4zOyy.js"),__vite__mapDeps([0,1])).then(e=>new e.SecureStoragePluginWeb)});export{u as SecureStoragePlugin};

@@ -10,9 +10,11 @@ trait ResolvesMonthlyAnalyticsFilter
     protected function getMonthlyAnalyticsMonthOptions(): array
     {
         $months = Transaction::query()
-            ->selectRaw('DISTINCT DATE_FORMAT(created_at, "%Y-%m") as month_key')
-            ->orderByDesc('month_key')
-            ->pluck('month_key');
+            ->orderByDesc('created_at')
+            ->pluck('created_at')
+            ->map(fn ($date): string => Carbon::parse($date)->format('Y-m'))
+            ->unique()
+            ->values();
 
         if ($months->isEmpty()) {
             $months = collect([now()->format('Y-m')]);

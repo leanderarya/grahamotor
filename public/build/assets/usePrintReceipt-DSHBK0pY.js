@@ -1,1 +1,0 @@
-import{r as t}from"./app-CzUkhm47.js";import{p as c,S as l}from"./store-1_IBhOFw.js";function m(){const[n,r]=t.useState(!1),[a,e]=t.useState(null);return{print:t.useCallback(async i=>{r(!0),e(null);try{await c(i,l)}catch(s){const o=s instanceof Error?s.message:"Gagal mencetak.";e(o)}finally{r(!1)}},[]),isPrinting:n,printError:a}}export{m as u};

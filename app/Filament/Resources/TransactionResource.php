@@ -248,11 +248,11 @@ class TransactionResource extends Resource
                     ->label('Bulan')
                     ->options(function (): array {
                         return Transaction::query()
-                            ->selectRaw("DATE_FORMAT(created_at, '%Y-%m') as month_key")
-                            ->distinct()
-                            ->orderByRaw("DATE_FORMAT(created_at, '%Y-%m') desc")
-                            ->pluck('month_key')
+                            ->orderByDesc('created_at')
+                            ->pluck('created_at')
+                            ->map(fn ($date): string => Carbon::parse($date)->format('Y-m'))
                             ->filter()
+                            ->unique()
                             ->mapWithKeys(function (string $monthKey): array {
                                 $label = Carbon::createFromFormat('Y-m', $monthKey)
                                     ->locale('id')
@@ -267,7 +267,11 @@ class TransactionResource extends Resource
                             return $query;
                         }
 
-                        return $query->whereRaw("DATE_FORMAT(created_at, '%Y-%m') = ?", [$data['value']]);
+                        $month = Carbon::createFromFormat('Y-m', $data['value']);
+
+                        return $query
+                            ->where('created_at', '>=', $month->copy()->startOfMonth())
+                            ->where('created_at', '<', $month->copy()->addMonth()->startOfMonth());
                     }),
 
                 // A. Filter Rentang Tanggal (Wajib buat Laporan Bulanan)

@@ -18,4 +18,11 @@ Added migration `database/migrations/2026_08_28_000000_expand_pin_column_for_has
 
 ## Verification
 
-Not yet run locally: Docker/MySQL availability and dependency state pending. No assertion weakened; no secrets touched. Deploy and production probes must happen only after successful CI/deployment.
+- CI/deploy run `33183580174`: passed. Test-and-build and deploy completed successfully. https://github.com/leanderarya/grahamotor/actions/runs/33183580174
+- Production target: `https://grahamotor.cahayaarkana.site`.
+- `POST /api/login` with `{}`: HTTP 422 expected; probe blocked locally by DNS resolution failure (`curl` exit 6).
+- `POST /api/login` with non-secret PIN `0000`: HTTP 401 or 429 expected; probe blocked locally by DNS resolution failure (`curl` exit 6).
+- `GET /`: probe blocked locally by DNS resolution failure (`curl` exit 6).
+- `GET /admin`: probe blocked locally by DNS resolution failure (`curl` exit 6).
+
+No assertion weakened; no secrets touched. Production Laravel log not inspected because probes could not reach host.
