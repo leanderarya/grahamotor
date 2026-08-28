@@ -28,7 +28,7 @@ interface Product {
 
 class ProductCache {
     private db: IDBPDatabase<ProductDB> | null = null;
-    private DB_NAME = 'grahamesran-products';
+    private DB_NAME = 'grahamotor-products';
     private DB_VERSION = 1;
 
     async init(): Promise<void> {

@@ -1,0 +1,105 @@
+name: Deploy Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          tools: composer:v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Install PHP deps
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Build assets
+        run: npm run build
+
+      - name: Prepare env
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+          touch database/database.sqlite
+          php -r "file_put_contents('.env', PHP_EOL.'DB_CONNECTION=sqlite'.PHP_EOL.'DB_DATABASE='.getcwd().'/database/database.sqlite'.PHP_EOL, FILE_APPEND);"
+          php artisan migrate --force
+
+      - name: Run tests
+        run: ./vendor/bin/phpunit
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-build
+          path: public/build
+          if-no-files-found: error
+
+  deploy:
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: public-build
+          path: public-build
+
+      - name: Transfer build artifact over SSH
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOSTINGER_SSH_HOST }}
+          username: ${{ secrets.HOSTINGER_SSH_USER }}
+          port: ${{ secrets.HOSTINGER_SSH_PORT }}
+          key: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
+          source: public-build/*
+          target: /home/u163968914/domains/cahayaarkana.site/public_html/grahamotor/public/build
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.HOSTINGER_SSH_HOST }}
+          username: ${{ secrets.HOSTINGER_SSH_USER }}
+          port: ${{ secrets.HOSTINGER_SSH_PORT }}
+          key: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            set -eu
+            cd /home/u163968914/domains/cahayaarkana.site/public_html/grahamotor
+            test "$(git remote get-url origin)" = "https://github.com/leanderarya/grahamotor.git"
+            test -z "$(git status --porcelain --untracked-files=all)"
+            test "$(git branch --show-current)" = "main"
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+            composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+            php artisan migrate --force
+            php artisan storage:link
+            php artisan optimize:clear
+            php artisan config:cache
+            php artisan route:cache
+            php artisan view:cache
+            php artisan event:cache
+            php artisan about

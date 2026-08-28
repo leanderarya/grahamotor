@@ -1,6 +1,6 @@
-# 🔧 Graha Mesran POS (Point of Sales)
+# 🔧 Graha Motor (Point of Sales)
 
-![Banner Graha Mesran](docs/images/GrahaMesran.png)
+![Banner Graha Motor](docs/images/GrahaMesran.png)
 
 [![Laravel](https://img.shields.io/badge/Laravel-11-FF2D20?style=for-the-badge&logo=laravel&logoColor=white)](https://laravel.com)
 [![Filament](https://img.shields.io/badge/Filament-v3-F28D1A?style=for-the-badge&logo=filament&logoColor=white)](https://filamentphp.com)
@@ -9,7 +9,7 @@
 
 ## 📖 Tentang Proyek
 
-**Graha Mesran POS** adalah sistem Point of Sale (Kasir) modern dan komprehensif yang dirancang khusus untuk toko otomotif yang berfokus pada penjualan suku cadang (sparepart) dan pelumas Pertamina.
+**Graha Motor** adalah sistem Point of Sale (Kasir) modern dan komprehensif yang dirancang khusus untuk toko otomotif yang berfokus pada penjualan suku cadang (sparepart) dan pelumas Pertamina.
 
 Berbeda dengan sistem kasir pada umumnya, aplikasi ini berfokus pada **Kesehatan Inventaris** dan **Kecerdasan Finansial**. Sistem ini dibangun untuk mengatasi kekacauan yang sering terjadi di bengkel: stok hilang ("tuyul"), arus kas yang tercampur antara pembelian aset vs biaya operasional, dan margin keuntungan yang tidak terpantau.
 
@@ -69,8 +69,8 @@ Dibangun dengan **Arsitektur Hybrid**:
 
 1.  **Clone repositori ini**
     ```bash
-    git clone [https://github.com/leanderarya/grahamesran.git](https://github.com/leanderarya/grahamesran.git)
-    cd grahamesran
+    git clone [https://github.com/leanderarya/grahamotor.git](https://github.com/leanderarya/grahamotor.git)
+    cd grahamotor
     ```
 
 2.  **Install Dependencies**
@@ -119,5 +119,5 @@ Proyek ini adalah perangkat lunak open-source yang dilisensikan di bawah [lisens
 ---
 
 <p align="center">
-  Dibuat dengan ❤️ oleh Arya Ajisadda Haryanto untuk Graha Mesran
+  Dibuat dengan ❤️ oleh Arya Ajisadda Haryanto untuk Graha Motor
 </p>
