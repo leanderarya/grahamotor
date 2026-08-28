@@ -106,7 +106,7 @@ jobs:
           key: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
           command_timeout: 20m
           script: |
-            set -eu
+            set -eux
              repo=/home/u163968914/domains/cahayaarkana.site/public_html/grahamotor
              build=/home/u163968914/grahamotor-build-${{ github.run_id }}
              trap 'rm -rf "$build"' EXIT
