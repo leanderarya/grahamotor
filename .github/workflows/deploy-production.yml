@@ -122,6 +122,7 @@ jobs:
              mkdir -p public/build
              cp -a "$build"/public-build/. public/build/
             composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+            php artisan tinker --execute='Schema::table("users", fn ($table) => $table->string("pin", 255)->change());'
             php artisan migrate --force
             php artisan storage:link
             php artisan optimize:clear
