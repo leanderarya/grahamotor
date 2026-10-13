@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\CashierSession;
 use App\Models\Transaction;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class CashierSessionService
@@ -57,21 +58,23 @@ class CashierSessionService
             ]);
         }
 
-        // Safety: Recalculate totals from actual transactions before closing
-        $this->recalculateSessionTotals($session);
+        return DB::transaction(function () use ($session, $closingCashPhysical, $notes): array {
+            // Safety: Recalculate totals from actual transactions before closing
+            $this->recalculateSessionTotals($session);
 
-        $expectedCash = (float) $session->opening_cash + (float) $session->cash_sales_total;
-        $difference = $closingCashPhysical - $expectedCash;
+            $expectedCash = (float) $session->opening_cash + (float) $session->cash_sales_total;
+            $difference = $closingCashPhysical - $expectedCash;
 
-        $session->update([
-            'closing_cash_physical' => $closingCashPhysical,
-            'expected_cash' => $expectedCash,
-            'cash_difference' => $difference,
-            'closing_notes' => $notes,
-            'closed_at' => now(),
-        ]);
+            $session->update([
+                'closing_cash_physical' => $closingCashPhysical,
+                'expected_cash' => $expectedCash,
+                'cash_difference' => $difference,
+                'closing_notes' => $notes,
+                'closed_at' => now(),
+            ]);
 
-        return $this->closingReport->buildReport($session);
+            return $this->closingReport->buildReport($session);
+        });
     }
 
     /**

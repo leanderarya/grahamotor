@@ -4,6 +4,29 @@ import {
     notifyWarning,
 } from '@/Components/app-notifications';
 import { ErrorBoundary } from '@/Components/ErrorBoundary';
+import { CategoryChips } from '@/Components/pos/category-chips';
+import { CheckoutPanel } from '@/Components/pos/checkout-panel';
+import { MobileBottomBar } from '@/Components/pos/mobile-bottom-bar';
+import { OpenSessionModal } from '@/Components/pos/open-session-modal';
+import { PrintReceipt } from '@/Components/pos/print-receipt';
+import { ProductCard } from '@/Components/pos/product-card';
+import { SettlementModal } from '@/Components/pos/settlement-modal';
+import { TopBar } from '@/Components/pos/top-bar';
+import { STORE_CONFIG } from '@/config/store';
+import { useNetwork } from '@/hooks/useNetwork';
+import { useVersionCheck } from '@/hooks/useVersionCheck';
+import { isNative } from '@/lib/capacitor';
+import { getProductLabel } from '@/lib/format';
+import type { ClosingReportData } from '@/lib/printer';
+import { productCache } from '@/lib/product-cache';
+import * as posService from '@/services/pos';
+import type { SharedData } from '@/types';
+import type {
+    ActiveDraft,
+    CartItem,
+    CashierSession,
+    Product,
+} from '@/types/pos';
 import { Head, useForm, usePage } from '@inertiajs/react';
 import {
     useCallback,
@@ -13,45 +36,58 @@ import {
     useRef,
     useState,
 } from 'react';
-import type { SharedData } from '@/types';
-import type { Product, CartItem, CashierSession, ActiveDraft } from '@/types/pos';
-import { ProductCard } from '@/Components/pos/product-card';
-import { CategoryChips } from '@/Components/pos/category-chips';
-import { TopBar } from '@/Components/pos/top-bar';
-import { OpenSessionModal } from '@/Components/pos/open-session-modal';
-import { SettlementModal } from '@/Components/pos/settlement-modal';
-import { getProductLabel } from '@/lib/format';
-import { CheckoutPanel } from '@/Components/pos/checkout-panel';
-import { PrintReceipt } from '@/Components/pos/print-receipt';
-import { STORE_CONFIG } from '@/config/store';
-import { useNetwork } from '@/hooks/useNetwork';
-import { productCache } from '@/lib/product-cache';
-import { isNative } from '@/lib/capacitor';
-import { useVersionCheck } from '@/hooks/useVersionCheck';
-import * as posService from '@/services/pos';
-import type { ClosingReportData } from '@/lib/printer';
 
-export default function TabletPOS({ products, cashierSession, activeDraft }: { products: Product[]; cashierSession: CashierSession | null; activeDraft?: ActiveDraft | null }) {
+export default function TabletPOS({
+    products,
+    cashierSession,
+    activeDraft,
+}: {
+    products: Product[];
+    cashierSession: CashierSession | null;
+    activeDraft?: ActiveDraft | null;
+}) {
     const { auth, flash } = usePage<SharedData>().props;
     const [search, setSearch] = useState('');
     const [customerType, setCustomerType] = useState('general');
     const [showOpenSessionModal, setShowOpenSessionModal] =
         useState(!cashierSession);
     const [showSettlementModal, setShowSettlementModal] = useState(false);
+    const [showMobileCheckout, setShowMobileCheckout] = useState(false);
+
+    useEffect(() => {
+        if (!showMobileCheckout) return;
+
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') setShowMobileCheckout(false);
+        };
+
+        document.addEventListener('keydown', closeOnEscape);
+        return () => document.removeEventListener('keydown', closeOnEscape);
+    }, [showMobileCheckout]);
     const [openingCash, setOpeningCash] = useState('');
     const [openingNotes, setOpeningNotes] = useState('');
     const [closingCashPhysical, setClosingCashPhysical] = useState('');
     const [closingNotes, setClosingNotes] = useState('');
     const [isOpeningSession, setIsOpeningSession] = useState(false);
     const [isClosingSession, setIsClosingSession] = useState(false);
-    const [sessionState, setSessionState] = useState<CashierSession | null>(cashierSession);
-    const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-    const [draftId, setDraftId] = useState<number | null>(activeDraft?.id ?? null);
-    const { data, setData, reset } = useForm<{ cart: CartItem[] }>({ cart: [] });
+    const [sessionState, setSessionState] = useState<CashierSession | null>(
+        cashierSession,
+    );
+    const [selectedCategory, setSelectedCategory] = useState<string | null>(
+        null,
+    );
+    const [draftId, setDraftId] = useState<number | null>(
+        activeDraft?.id ?? null,
+    );
+    const { data, setData, reset } = useForm<{ cart: CartItem[] }>({
+        cart: [],
+    });
     const skipAutoSave = useRef(true); // skip initial render
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const { isOnline } = useNetwork();
-    const [closingData, setClosingData] = useState<ClosingReportData | null>(null);
+    const [closingData, setClosingData] = useState<ClosingReportData | null>(
+        null,
+    );
     const [showClosingReport, setShowClosingReport] = useState(false);
     const [autoSaveFailedCount, setAutoSaveFailedCount] = useState(0);
     const [offlineProducts, setOfflineProducts] = useState<Product[]>([]);
@@ -88,14 +124,18 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
 
     useEffect(() => {
         if (activeDraftData && activeDraftData.transaction_items) {
-            const restoredCart = activeDraftData.transaction_items.map(item => ({
-                ...item.product,
-                qty: item.quantity,
-            })) as CartItem[];
+            const restoredCart = activeDraftData.transaction_items.map(
+                (item) => ({
+                    ...item.product,
+                    qty: item.quantity,
+                }),
+            ) as CartItem[];
             setData('cart', restoredCart);
         }
         // Setelah restore, izinkan auto-save
-        const timer = setTimeout(() => { skipAutoSave.current = false; }, 500);
+        const timer = setTimeout(() => {
+            skipAutoSave.current = false;
+        }, 500);
         return () => clearTimeout(timer);
     }, [activeDraftData, setData]);
 
@@ -120,18 +160,20 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
             // Ada item → auto-save
             try {
                 const result = await posService.autoSaveDraft(
-                    data.cart.map(item => ({ id: item.id, qty: item.qty })),
+                    data.cart.map((item) => ({ id: item.id, qty: item.qty })),
                     customerType,
                     draftId,
                 );
                 if (result?.draft_id) setDraftId(result.draft_id);
                 setAutoSaveFailedCount(0);
             } catch (_) {
-                setAutoSaveFailedCount(prev => {
+                setAutoSaveFailedCount((prev) => {
                     const next = prev + 1;
                     // Show toast after 3 consecutive failures
                     if (next >= 3) {
-                        notifyError('Auto-save gagal. Pastikan koneksi internet stabil.');
+                        notifyError(
+                            'Auto-save gagal. Pastikan koneksi internet stabil.',
+                        );
                     }
                     return next;
                 });
@@ -184,7 +226,8 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
                     (product.sku || '').toLowerCase().includes(query) ||
                     (product.vehicles?.some((vehicle: { model?: string }) =>
                         (vehicle.model || '').toLowerCase().includes(query),
-                    ) ?? false),
+                    ) ??
+                        false),
             );
             base = base.slice(0, 40);
         }
@@ -283,7 +326,10 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
 
             // If qty would go to 0 or below, remove the item
             if (nextQty <= 0) {
-                setData('cart', data.cart.filter((i) => i.id !== id));
+                setData(
+                    'cart',
+                    data.cart.filter((i) => i.id !== id),
+                );
                 return;
             }
 
@@ -319,7 +365,8 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
     const clearCart = useCallback(() => {
         setData('cart', []);
         // Langsung hapus draft dari DB, jangan lewat debounce
-        posService.clearDraft(draftId)
+        posService
+            .clearDraft(draftId)
             .then(() => setDraftId(null))
             .catch(() => {});
     }, [setData, draftId]);
@@ -328,7 +375,10 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
         setIsOpeningSession(true);
 
         try {
-            await posService.openSession(Number(openingCash || 0), openingNotes);
+            await posService.openSession(
+                Number(openingCash || 0),
+                openingNotes,
+            );
             setSessionState({
                 id: Date.now(),
                 opening_cash: Number(openingCash || 0),
@@ -341,7 +391,9 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
             setOpeningNotes('');
             setShowOpenSessionModal(false);
         } catch (error: any) {
-            notifyError(error?.opening_cash || error?.message || 'Gagal membuka kasir.');
+            notifyError(
+                error?.opening_cash || error?.message || 'Gagal membuka kasir.',
+            );
         } finally {
             setIsOpeningSession(false);
         }
@@ -364,7 +416,9 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
                 closingNotes,
             );
             if (backendClosingData) {
-                setClosingData(backendClosingData as unknown as ClosingReportData);
+                setClosingData(
+                    backendClosingData as unknown as ClosingReportData,
+                );
             }
             setSessionState(null);
             setClosingCashPhysical('');
@@ -375,7 +429,11 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
             reset();
             setSearch('');
         } catch (error: any) {
-            notifyError(error?.closing_cash_physical || error?.message || 'Gagal menutup kasir.');
+            notifyError(
+                error?.closing_cash_physical ||
+                    error?.message ||
+                    'Gagal menutup kasir.',
+            );
         } finally {
             setIsClosingSession(false);
         }
@@ -386,7 +444,7 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
 
         try {
             await posService.saveDraft(
-                data.cart.map(item => ({ id: item.id, qty: item.qty })),
+                data.cart.map((item) => ({ id: item.id, qty: item.qty })),
                 customerType,
                 draftId,
             );
@@ -399,128 +457,174 @@ export default function TabletPOS({ products, cashierSession, activeDraft }: { p
     return (
         <ErrorBoundary>
             <div className="flex h-screen flex-col bg-white">
-            <Head title="Kasir - Graha Motor" />
-            <AppNotifications flash={flash} />
+                <Head title="Kasir - Graha Motor" />
+                <AppNotifications flash={flash} />
 
-            {/* Update banner */}
-            {needsUpdate && (
-                <div className="bg-amber-500 px-4 py-2 text-center text-sm font-semibold text-white">
-                    Versi baru tersedia (v{latestVersion}).
-                    <button
-                        onClick={() => window.location.reload()}
-                        className="ml-2 underline"
-                    >
-                        Muat Ulang
-                    </button>
-                </div>
-            )}
+                {/* Update banner */}
+                {needsUpdate && (
+                    <div className="bg-amber-500 px-4 py-2 text-center text-sm font-semibold text-white">
+                        Versi baru tersedia (v{latestVersion}).
+                        <button
+                            onClick={() => window.location.reload()}
+                            className="ml-2 underline"
+                        >
+                            Muat Ulang
+                        </button>
+                    </div>
+                )}
 
-            {/* Top Bar */}
-            <TopBar
-                search={search}
-                onSearchChange={setSearch}
-                hasOpenSession={hasOpenSession}
-                userName={auth?.user?.name || ''}
-                onSettlementClick={() =>
-                    hasOpenSession
-                        ? setShowSettlementModal(true)
-                        : setShowOpenSessionModal(true)
-                }
-            />
+                {/* Top Bar */}
+                <TopBar
+                    search={search}
+                    onSearchChange={setSearch}
+                    hasOpenSession={hasOpenSession}
+                    userName={auth?.user?.name || ''}
+                    onSettlementClick={() =>
+                        hasOpenSession
+                            ? setShowSettlementModal(true)
+                            : setShowOpenSessionModal(true)
+                    }
+                />
 
-            {/* Two-Panel Layout */}
-            <div className="flex flex-1 overflow-hidden">
-                {/* Left Panel: Category + Products */}
-                <main className="flex flex-1 flex-col overflow-hidden">
-                    {/* Category Chips */}
-                    <div className="shrink-0 border-b border-slate-200 px-4 py-2.5">
-                        <CategoryChips
-                            groups={categoryGroups}
-                            selected={selectedCategory}
-                            onSelect={setSelectedCategory}
+                {/* Product list and desktop checkout */}
+                <div className="flex min-h-0 flex-1 overflow-hidden pb-24 lg:pb-0">
+                    {/* Left Panel: Category + Products */}
+                    <main className="flex flex-1 flex-col overflow-hidden">
+                        {/* Category Chips */}
+                        <div className="shrink-0 border-b border-slate-200 px-4 py-2.5">
+                            <CategoryChips
+                                groups={categoryGroups}
+                                selected={selectedCategory}
+                                onSelect={setSelectedCategory}
+                            />
+                        </div>
+
+                        {/* Product Grid */}
+                        <div className="flex-1 overflow-y-auto p-4">
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                                {displayProducts.map((product) => {
+                                    const cartItem = data.cart.find(
+                                        (item) => item.id === product.id,
+                                    );
+                                    return (
+                                        <ProductCard
+                                            key={product.id}
+                                            product={product}
+                                            customerType={customerType}
+                                            onAddToCart={addToCart}
+                                            inCartQty={cartItem?.qty || 0}
+                                        />
+                                    );
+                                })}
+
+                                {displayProducts.length === 0 && (
+                                    <p className="col-span-full py-12 text-center text-sm text-slate-400">
+                                        Barang tidak ditemukan.
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                    </main>
+
+                    {/* Desktop checkout */}
+                    <div className="hidden lg:flex lg:w-[30%] lg:min-w-[300px]">
+                        <CheckoutPanel
+                            cart={data.cart}
+                            productById={productById}
+                            getProductPrice={getProductPrice}
+                            clearCart={clearCart}
+                            removeItem={removeItem}
+                            updateQty={updateQty}
+                            totalAmount={totalAmount}
+                            totalQty={totalQty}
+                            isWorkshop={isWorkshop}
+                            hasOpenSession={hasOpenSession}
+                            customerType={customerType}
+                            onCustomerTypeChange={setCustomerType}
+                            onSaveDraft={handleSaveDraft}
                         />
                     </div>
+                </div>
 
-                    {/* Product Grid */}
-                    <div className="flex-1 overflow-y-auto p-4">
-                        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5">
-                            {displayProducts.map((product) => {
-                                const cartItem = data.cart.find((item) => item.id === product.id);
-                                return (
-                                    <ProductCard
-                                        key={product.id}
-                                        product={product}
-                                        customerType={customerType}
-                                        onAddToCart={addToCart}
-                                        inCartQty={cartItem?.qty || 0}
-                                    />
-                                );
-                            })}
+                <MobileBottomBar
+                    cartCount={data.cart.length}
+                    totalAmount={totalAmount}
+                    hasOpenSession={hasOpenSession}
+                    onToggleCheckout={() => setShowMobileCheckout(true)}
+                    onSessionButtonClick={() =>
+                        hasOpenSession
+                            ? setShowSettlementModal(true)
+                            : setShowOpenSessionModal(true)
+                    }
+                />
 
-                            {displayProducts.length === 0 && (
-                                <p className="col-span-full py-12 text-center text-sm text-slate-400">
-                                    Barang tidak ditemukan.
-                                </p>
-                            )}
+                {showMobileCheckout && (
+                    <div
+                        className="fixed inset-0 z-40 flex items-end bg-black/40 lg:hidden"
+                        onClick={() => setShowMobileCheckout(false)}
+                    >
+                        <div
+                            className="w-full"
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            <CheckoutPanel
+                                mobile
+                                onClose={() => setShowMobileCheckout(false)}
+                                cart={data.cart}
+                                productById={productById}
+                                getProductPrice={getProductPrice}
+                                clearCart={clearCart}
+                                removeItem={removeItem}
+                                updateQty={updateQty}
+                                totalAmount={totalAmount}
+                                totalQty={totalQty}
+                                isWorkshop={isWorkshop}
+                                hasOpenSession={hasOpenSession}
+                                customerType={customerType}
+                                onCustomerTypeChange={setCustomerType}
+                                onSaveDraft={handleSaveDraft}
+                            />
                         </div>
                     </div>
-                </main>
+                )}
 
-                {/* Right Panel: Checkout — always visible */}
-                <CheckoutPanel
-                    cart={data.cart}
-                    productById={productById}
-                    getProductPrice={getProductPrice}
-                    clearCart={clearCart}
-                    removeItem={removeItem}
-                    updateQty={updateQty}
-                    totalAmount={totalAmount}
-                    totalQty={totalQty}
-                    isWorkshop={isWorkshop}
-                    hasOpenSession={hasOpenSession}
-                    customerType={customerType}
-                    onCustomerTypeChange={setCustomerType}
-                    onSaveDraft={handleSaveDraft}
+                {/* Modals */}
+                <OpenSessionModal
+                    show={!hasOpenSession && showOpenSessionModal}
+                    onClose={() => setShowOpenSessionModal(false)}
+                    openingCash={openingCash}
+                    openingNotes={openingNotes}
+                    onOpeningCashChange={setOpeningCash}
+                    onOpeningNotesChange={setOpeningNotes}
+                    onSubmit={handleOpenSession}
+                    isOpeningSession={isOpeningSession}
+                />
+
+                <SettlementModal
+                    show={showSettlementModal && hasOpenSession}
+                    onClose={() => setShowSettlementModal(false)}
+                    sessionState={sessionState}
+                    closingCash={closingCashPhysical}
+                    closingNotes={closingNotes}
+                    onClosingCashChange={setClosingCashPhysical}
+                    onClosingNotesChange={setClosingNotes}
+                    onSubmit={handleCloseSession}
+                    isClosingSession={isClosingSession}
+                    expectedCash={expectedCash}
+                    settlementDifference={settlementDifference}
+                    settlementStatus={settlementStatus}
+                    closingData={closingData}
+                    showClosingReport={showClosingReport}
+                    onCloseClosingReport={() => setShowClosingReport(false)}
+                />
+
+                <PrintReceipt
+                    receiptData={null}
+                    storeName={STORE_CONFIG.name}
+                    storeAddress={STORE_CONFIG.address}
+                    storePhone={STORE_CONFIG.phone}
                 />
             </div>
-
-            {/* Modals */}
-            <OpenSessionModal
-                show={!hasOpenSession && showOpenSessionModal}
-                onClose={() => setShowOpenSessionModal(false)}
-                openingCash={openingCash}
-                openingNotes={openingNotes}
-                onOpeningCashChange={setOpeningCash}
-                onOpeningNotesChange={setOpeningNotes}
-                onSubmit={handleOpenSession}
-                isOpeningSession={isOpeningSession}
-            />
-
-            <SettlementModal
-                show={showSettlementModal && hasOpenSession}
-                onClose={() => setShowSettlementModal(false)}
-                sessionState={sessionState}
-                closingCash={closingCashPhysical}
-                closingNotes={closingNotes}
-                onClosingCashChange={setClosingCashPhysical}
-                onClosingNotesChange={setClosingNotes}
-                onSubmit={handleCloseSession}
-                isClosingSession={isClosingSession}
-                expectedCash={expectedCash}
-                settlementDifference={settlementDifference}
-                settlementStatus={settlementStatus}
-                closingData={closingData}
-                showClosingReport={showClosingReport}
-                onCloseClosingReport={() => setShowClosingReport(false)}
-            />
-
-            <PrintReceipt
-                receiptData={null}
-                storeName={STORE_CONFIG.name}
-                storeAddress={STORE_CONFIG.address}
-                storePhone={STORE_CONFIG.phone}
-            />
-        </div>
         </ErrorBoundary>
     );
 }

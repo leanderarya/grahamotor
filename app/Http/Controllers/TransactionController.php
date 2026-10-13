@@ -9,6 +9,7 @@ use App\Services\ClosingReportService;
 use App\Services\DraftService;
 use App\Services\TransactionService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 
@@ -277,6 +278,15 @@ class TransactionController extends Controller
             $validated['closing_notes'] ?? null,
         );
 
+        // pos.ts posts this endpoint with Accept: application/json so it can read
+        // closingData directly; a redirect would make fetch() parse HTML and throw.
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'Sesi kasir berhasil ditutup.',
+                'closingData' => $closingData,
+            ]);
+        }
+
         return back()
             ->with('success', 'Sesi kasir berhasil ditutup.')
             ->with('closingData', $closingData);
@@ -298,11 +308,19 @@ class TransactionController extends Controller
         try {
             $this->transactionService->processPayment(auth()->user(), $validated);
 
-            return redirect()->back()->with('success', 'Transaksi Berhasil Disimpan!');
+            // Not back(): the draft just became 'paid', so returning to
+            // /pos/checkout/{id} would 404 (checkout() only serves drafts).
+            return redirect()->route('transactions.create')->with('success', 'Transaksi Berhasil Disimpan!');
         } catch (ValidationException $e) {
             throw $e;
         } catch (\Exception $e) {
-            return redirect()->back()->withErrors(['error' => 'Terjadi kesalahan sistem: '.$e->getMessage()]);
+            Log::error('Transaction store failed', [
+                'user_id' => auth()->id(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return redirect()->back()->withErrors(['error' => 'Terjadi kesalahan sistem. Silakan coba lagi.']);
         }
     }
 }

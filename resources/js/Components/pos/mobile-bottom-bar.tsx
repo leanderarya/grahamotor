@@ -20,6 +20,7 @@ export function MobileBottomBar({
             <div className="mx-auto flex max-w-xl items-center gap-3">
                 <button
                     onClick={onToggleCheckout}
+                    aria-label={`Buka keranjang, ${cartCount} item, total Rp ${formatRupiah(totalAmount)}`}
                     className="flex-1 rounded-3xl bg-slate-950 px-4 py-4 text-left text-white shadow-sm transition-all duration-200 hover:bg-slate-800 hover:shadow-md"
                 >
                     <div className="text-[11px] font-bold tracking-widest text-slate-400 uppercase">

@@ -56,7 +56,7 @@ class ClosingReportService
             });
 
         return [
-            'date' => now()->toLocaleDateString('id-ID'),
+            'date' => now()->locale('id')->translatedFormat('j F Y'),
             'cashierName' => $session->user?->name ?? '-',
             'openedAt' => $session->opened_at->format('H:i'),
             'closedAt' => now()->format('H:i'),
@@ -71,7 +71,7 @@ class ClosingReportService
             'expectedCash' => $expectedCash,
             'physicalCash' => $closingCash,
             'difference' => $difference,
-            'settlementStatus' => $difference === 0 ? 'balance' : ($difference < 0 ? 'minus' : 'over'),
+            'settlementStatus' => abs($difference) < 0.005 ? 'balance' : ($difference < 0 ? 'minus' : 'over'),
             'topProducts' => $topProducts->toArray(),
             'paymentBreakdown' => $paymentBreakdown->toArray(),
         ];

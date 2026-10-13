@@ -1,6 +1,6 @@
-import { cn } from '@/lib/utils';
 import { formatRupiah, getProductLabel } from '@/lib/format';
-import { Trash2, Minus, Plus } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Minus, Plus, Trash2 } from 'lucide-react';
 
 interface CartItem {
     id: number;
@@ -28,6 +28,8 @@ interface CheckoutPanelProps {
     customerType: string;
     onCustomerTypeChange: (type: string) => void;
     onSaveDraft: () => void;
+    mobile?: boolean;
+    onClose?: () => void;
 }
 
 export function CheckoutPanel({
@@ -44,11 +46,30 @@ export function CheckoutPanel({
     customerType,
     onCustomerTypeChange,
     onSaveDraft,
+    mobile = false,
+    onClose,
 }: CheckoutPanelProps) {
     return (
         <section
-            className="flex w-[30%] min-w-[300px] flex-col border-l border-slate-200 bg-white"
+            className={cn(
+                'flex flex-col border-slate-200 bg-white',
+                mobile
+                    ? 'h-[85dvh] w-full rounded-t-2xl border-t shadow-2xl'
+                    : 'w-full border-l',
+            )}
+            role={mobile ? 'dialog' : undefined}
+            aria-modal={mobile || undefined}
+            aria-label={mobile ? 'Keranjang belanja' : undefined}
         >
+            {mobile && (
+                <button
+                    type="button"
+                    onClick={onClose}
+                    className="self-end px-4 py-2 text-sm font-semibold text-slate-500"
+                >
+                    Tutup
+                </button>
+            )}
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
                 <div className="text-sm font-bold text-slate-950">
@@ -60,14 +81,14 @@ export function CheckoutPanel({
                     )}
                 </div>
                 <div className="flex items-center gap-1">
-                {cart.length > 0 && (
-                    <button
-                        onClick={clearCart}
-                        className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                    >
-                        <Trash2 className="h-4 w-4" />
-                    </button>
-                )}
+                    {cart.length > 0 && (
+                        <button
+                            onClick={clearCart}
+                            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                        >
+                            <Trash2 className="h-4 w-4" />
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -90,10 +111,14 @@ export function CheckoutPanel({
                     const price = getProductPrice(product);
 
                     return (
-                        <div key={item.id} className="touch-tooltip" data-tooltip={getProductLabel(item)}>
+                        <div
+                            key={item.id}
+                            className="touch-tooltip"
+                            data-tooltip={getProductLabel(item)}
+                        >
                             <div className="flex items-start gap-3 px-4 py-3">
                                 <div className="min-w-0 flex-1">
-                                    <div className="text-sm font-semibold text-slate-950 line-clamp-1">
+                                    <div className="line-clamp-1 text-sm font-semibold text-slate-950">
                                         {getProductLabel(item)}
                                     </div>
                                     <div className="mt-0.5 text-xs text-slate-500">
@@ -120,8 +145,11 @@ export function CheckoutPanel({
                                 </div>
 
                                 <div className="flex flex-col items-end gap-1">
-                                    <div className="text-sm font-bold text-slate-950 whitespace-nowrap">
-                                        Rp {formatRupiah(price * Number(item.qty || 0))}
+                                    <div className="text-sm font-bold whitespace-nowrap text-slate-950">
+                                        Rp{' '}
+                                        {formatRupiah(
+                                            price * Number(item.qty || 0),
+                                        )}
                                     </div>
                                     <button
                                         onClick={() => removeItem(item.id)}
@@ -141,7 +169,7 @@ export function CheckoutPanel({
             </div>
 
             {/* Footer */}
-            <div className="border-t border-slate-200 px-4 py-3 space-y-3">
+            <div className="space-y-3 border-t border-slate-200 px-4 py-3">
                 {/* Customer Type Toggle */}
                 <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
                     <button
@@ -149,7 +177,7 @@ export function CheckoutPanel({
                         className={cn(
                             'flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors',
                             !isWorkshop
-                                ? 'bg-white text-slate-950 border border-slate-200'
+                                ? 'border border-slate-200 bg-white text-slate-950'
                                 : 'text-slate-500',
                         )}
                     >
@@ -160,7 +188,7 @@ export function CheckoutPanel({
                         className={cn(
                             'flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors',
                             isWorkshop
-                                ? 'bg-white text-amber-700 border border-slate-200'
+                                ? 'border border-slate-200 bg-white text-amber-700'
                                 : 'text-slate-500',
                         )}
                     >
@@ -170,12 +198,16 @@ export function CheckoutPanel({
 
                 {/* Summary */}
                 <div className="flex items-center justify-between text-xs text-slate-500">
-                    <span>{cart.length} item · {totalQty} pcs</span>
+                    <span>
+                        {cart.length} item · {totalQty} pcs
+                    </span>
                 </div>
 
                 {/* Total */}
                 <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-slate-500">Total</span>
+                    <span className="text-sm font-semibold text-slate-500">
+                        Total
+                    </span>
                     <span className="text-2xl font-bold text-slate-950">
                         Rp {formatRupiah(totalAmount)}
                     </span>
@@ -190,7 +222,6 @@ export function CheckoutPanel({
                     Bayar Sekarang
                 </button>
             </div>
-
         </section>
     );
 }

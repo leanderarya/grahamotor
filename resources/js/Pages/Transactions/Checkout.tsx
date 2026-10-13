@@ -1,21 +1,25 @@
-import { Head, router, Link, usePage } from '@inertiajs/react';
-import { useState, useMemo, useCallback } from 'react';
-import { route } from 'ziggy-js';
-import { cn } from '@/lib/utils';
-import { formatRupiah, formatSignedCurrency, sanitizeNumericInput } from '@/lib/format';
-import { ArrowLeft, Banknote, QrCode, Building2 } from 'lucide-react';
-import type { SharedData } from '@/types';
-import type { CashierSession, CheckoutDraft } from '@/types/pos';
 import {
     AppNotifications,
     notifyError,
     notifyWarning,
 } from '@/Components/app-notifications';
-import { isNative } from '@/lib/capacitor';
-import * as posService from '@/services/pos';
 import { useNetwork } from '@/hooks/useNetwork';
-import { offlineQueue } from '@/lib/offline-queue';
 import { usePrintReceipt } from '@/hooks/usePrintReceipt';
+import { isNative } from '@/lib/capacitor';
+import {
+    formatRupiah,
+    formatSignedCurrency,
+    sanitizeNumericInput,
+} from '@/lib/format';
+import { offlineQueue } from '@/lib/offline-queue';
+import { cn } from '@/lib/utils';
+import * as posService from '@/services/pos';
+import type { SharedData } from '@/types';
+import type { CashierSession, CheckoutDraft } from '@/types/pos';
+import { Head, Link, router, usePage } from '@inertiajs/react';
+import { ArrowLeft, Banknote, Building2, QrCode } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import { route } from 'ziggy-js';
 
 interface CheckoutProps {
     draft: CheckoutDraft;
@@ -26,9 +30,24 @@ const formSurface =
     'border border-slate-200 bg-white transition-all duration-200 ease-out';
 
 const PAYMENT_METHODS = [
-    { id: 'cash', label: 'Tunai', icon: Banknote, color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-    { id: 'qris', label: 'QRIS', icon: QrCode, color: 'bg-blue-50 text-blue-700 border-blue-200' },
-    { id: 'bank', label: 'Transfer', icon: Building2, color: 'bg-purple-50 text-purple-700 border-purple-200' },
+    {
+        id: 'cash',
+        label: 'Tunai',
+        icon: Banknote,
+        color: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    },
+    {
+        id: 'qris',
+        label: 'QRIS',
+        icon: QrCode,
+        color: 'bg-blue-50 text-blue-700 border-blue-200',
+    },
+    {
+        id: 'bank',
+        label: 'Transfer',
+        icon: Building2,
+        color: 'bg-purple-50 text-purple-700 border-purple-200',
+    },
 ];
 
 export default function Checkout({ draft, cashierSession }: CheckoutProps) {
@@ -76,7 +95,10 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
 
     const processPayment = useCallback(async () => {
         if (!hasOpenSession) {
-            notifyWarning('Buka kasir terlebih dahulu.', 'Sesi kasir tidak aktif');
+            notifyWarning(
+                'Buka kasir terlebih dahulu.',
+                'Sesi kasir tidak aktif',
+            );
             return;
         }
 
@@ -124,7 +146,9 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
 
                 // Print receipt
                 await printReceipt({
-                    invoice: result?.transaction?.invoice_number ?? draft.invoice_number,
+                    invoice:
+                        result?.transaction?.invoice_number ??
+                        draft.invoice_number,
                     date: new Date().toLocaleDateString('id-ID'),
                     items: draft.items.map((item) => ({
                         name: item.product_name,
@@ -146,24 +170,21 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
             }
         } else {
             // Web mode: existing Inertia behavior
-            router.post(
-                route('transactions.store'),
-                transactionData,
-                {
-                    onSuccess: () => {
-                        router.visit(route('transactions.create'));
-                    },
-                    onError: (errors: Record<string, string>) => {
-                        const message =
-                            errors?.cart ||
-                            errors?.payment_method ||
-                            errors?.amount_paid ||
-                            'Gagal memproses transaksi.';
-                        notifyError(message);
-                    },
-                    onFinish: () => setIsProcessing(false),
+            router.post(route('transactions.store'), transactionData, {
+                onSuccess: () => {
+                    router.visit(route('transactions.create'));
                 },
-            );
+                onError: (errors: Record<string, string>) => {
+                    const message =
+                        errors?.cart ||
+                        errors?.error ||
+                        errors?.payment_method ||
+                        errors?.amount_paid ||
+                        'Gagal memproses transaksi.';
+                    notifyError(message);
+                },
+                onFinish: () => setIsProcessing(false),
+            });
         }
     }, [
         cashReceived,
@@ -193,9 +214,14 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
                             Kembali
                         </Link>
                         <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-slate-400">{draft.invoice_number}</span>
+                            <span className="text-xs font-bold text-slate-400">
+                                {draft.invoice_number}
+                            </span>
                             {hasOpenSession && (
-                                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" title="Sesi kasir aktif" />
+                                <span
+                                    className="inline-block h-2 w-2 rounded-full bg-emerald-500"
+                                    title="Sesi kasir aktif"
+                                />
                             )}
                         </div>
                     </div>
@@ -237,10 +263,11 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
                                             {item.product_name}
                                         </div>
                                         <div className="text-[10px] font-semibold text-slate-500">
-                                            {item.quantity} × Rp{formatRupiah(item.price_at_time)}
+                                            {item.quantity} × Rp
+                                            {formatRupiah(item.price_at_time)}
                                         </div>
                                     </div>
-                                    <div className="text-xs font-bold text-slate-950 whitespace-nowrap">
+                                    <div className="text-xs font-bold whitespace-nowrap text-slate-950">
                                         Rp{formatRupiah(item.subtotal)}
                                     </div>
                                 </div>
@@ -339,8 +366,7 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
                                                         cashReceived || 0,
                                                     ) === amount
                                                         ? 'border-indigo-600 bg-indigo-600 text-white'
-                                                        : amount ===
-                                                            totalAmount
+                                                        : amount === totalAmount
                                                           ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
                                                           : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100',
                                                 )}
@@ -388,8 +414,7 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
                                 disabled={
                                     !hasOpenSession ||
                                     isProcessing ||
-                                    (paymentMethod === 'cash' &&
-                                        change < 0)
+                                    (paymentMethod === 'cash' && change < 0)
                                 }
                                 className="w-full rounded-lg bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition-all duration-200 hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
                             >
