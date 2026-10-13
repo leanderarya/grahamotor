@@ -53,17 +53,6 @@ export default function TabletPOS({
         useState(!cashierSession);
     const [showSettlementModal, setShowSettlementModal] = useState(false);
     const [showMobileCheckout, setShowMobileCheckout] = useState(false);
-
-    useEffect(() => {
-        if (!showMobileCheckout) return;
-
-        const closeOnEscape = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') setShowMobileCheckout(false);
-        };
-
-        document.addEventListener('keydown', closeOnEscape);
-        return () => document.removeEventListener('keydown', closeOnEscape);
-    }, [showMobileCheckout]);
     const [openingCash, setOpeningCash] = useState('');
     const [openingNotes, setOpeningNotes] = useState('');
     const [closingCashPhysical, setClosingCashPhysical] = useState('');
@@ -195,6 +184,29 @@ export default function TabletPOS({
         return map;
     }, [activeProducts]);
 
+    const cartQtyById = useMemo(
+        () =>
+            new Map(data.cart.map((item) => [item.id, Number(item.qty) || 0])),
+        [data.cart],
+    );
+
+    const searchableProducts = useMemo(
+        () =>
+            activeProducts.map((product) => ({
+                product,
+                searchText: [
+                    product.name,
+                    product.sku,
+                    ...(product.vehicles?.map((vehicle) => vehicle.model) ??
+                        []),
+                ]
+                    .filter(Boolean)
+                    .join(' ')
+                    .toLowerCase(),
+            })),
+        [activeProducts],
+    );
+
     const categoryGroups = useMemo(() => {
         const groups: Record<string, number> = {};
         activeProducts.forEach((p) => {
@@ -209,31 +221,24 @@ export default function TabletPOS({
     const displayProducts = useMemo(() => {
         const query = deferredSearch.trim().toLowerCase();
 
-        let base = activeProducts;
+        let base = searchableProducts;
 
         // Filter by category if selected
         if (selectedCategory && !query) {
             base = base.filter(
-                (p) => (p.category || 'Lainnya') === selectedCategory,
+                ({ product }) =>
+                    (product.category || 'Lainnya') === selectedCategory,
             );
         }
 
         // Filter by search
         if (query) {
-            base = base.filter(
-                (product: Product) =>
-                    product.name.toLowerCase().includes(query) ||
-                    (product.sku || '').toLowerCase().includes(query) ||
-                    (product.vehicles?.some((vehicle: { model?: string }) =>
-                        (vehicle.model || '').toLowerCase().includes(query),
-                    ) ??
-                        false),
-            );
+            base = base.filter(({ searchText }) => searchText.includes(query));
             base = base.slice(0, 40);
         }
 
-        return base;
-    }, [activeProducts, deferredSearch, selectedCategory]);
+        return base.map(({ product }) => product);
+    }, [searchableProducts, deferredSearch, selectedCategory]);
 
     useEffect(() => {
         if (deferredSearch.trim()) {
@@ -502,20 +507,17 @@ export default function TabletPOS({
                         {/* Product Grid */}
                         <div className="flex-1 overflow-y-auto p-4">
                             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-                                {displayProducts.map((product) => {
-                                    const cartItem = data.cart.find(
-                                        (item) => item.id === product.id,
-                                    );
-                                    return (
-                                        <ProductCard
-                                            key={product.id}
-                                            product={product}
-                                            customerType={customerType}
-                                            onAddToCart={addToCart}
-                                            inCartQty={cartItem?.qty || 0}
-                                        />
-                                    );
-                                })}
+                                {displayProducts.map((product) => (
+                                    <ProductCard
+                                        key={product.id}
+                                        product={product}
+                                        customerType={customerType}
+                                        onAddToCart={addToCart}
+                                        inCartQty={
+                                            cartQtyById.get(product.id) || 0
+                                        }
+                                    />
+                                ))}
 
                                 {displayProducts.length === 0 && (
                                     <p className="col-span-full py-12 text-center text-sm text-slate-400">

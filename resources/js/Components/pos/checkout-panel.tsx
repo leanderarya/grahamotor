@@ -1,6 +1,7 @@
 import { formatRupiah, getProductLabel } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Minus, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 
 interface CartItem {
     id: number;
@@ -42,15 +43,69 @@ export function CheckoutPanel({
     totalAmount,
     totalQty,
     isWorkshop,
-    hasOpenSession,
-    customerType,
     onCustomerTypeChange,
     onSaveDraft,
     mobile = false,
     onClose,
 }: CheckoutPanelProps) {
+    const dialogRef = useRef<HTMLElement>(null);
+    const closeButtonRef = useRef<HTMLButtonElement>(null);
+    const previousFocusRef = useRef<HTMLElement | null>(null);
+
+    useEffect(() => {
+        if (!mobile) return;
+
+        previousFocusRef.current =
+            document.activeElement instanceof HTMLElement
+                ? document.activeElement
+                : null;
+        closeButtonRef.current?.focus();
+
+        return () => previousFocusRef.current?.focus();
+    }, [mobile]);
+
+    useEffect(() => {
+        if (!mobile) return;
+
+        const dialog = dialogRef.current;
+        if (!dialog) return;
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                onClose?.();
+                return;
+            }
+
+            if (event.key !== 'Tab') return;
+            const focusable = Array.from(
+                dialog.querySelectorAll<HTMLElement>(
+                    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+                ),
+            ).filter((element) => element.getClientRects().length > 0);
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (!first || !last) return;
+
+            if (!dialog.contains(document.activeElement)) {
+                event.preventDefault();
+                (event.shiftKey ? last : first).focus();
+            } else if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [mobile, onClose]);
+
     return (
         <section
+            ref={dialogRef}
             className={cn(
                 'flex flex-col border-slate-200 bg-white',
                 mobile
@@ -59,20 +114,24 @@ export function CheckoutPanel({
             )}
             role={mobile ? 'dialog' : undefined}
             aria-modal={mobile || undefined}
-            aria-label={mobile ? 'Keranjang belanja' : undefined}
+            aria-labelledby={mobile ? 'mobile-cart-title' : undefined}
         >
             {mobile && (
                 <button
+                    ref={closeButtonRef}
                     type="button"
                     onClick={onClose}
-                    className="self-end px-4 py-2 text-sm font-semibold text-slate-500"
+                    className="min-h-11 self-end px-4 py-2 text-sm font-semibold text-slate-500"
                 >
                     Tutup
                 </button>
             )}
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-                <div className="text-sm font-bold text-slate-950">
+                <div
+                    className="text-sm font-bold text-slate-950"
+                    id={mobile ? 'mobile-cart-title' : undefined}
+                >
                     Keranjang
                     {cart.length > 0 && (
                         <span className="ml-1.5 text-slate-400">
@@ -83,10 +142,12 @@ export function CheckoutPanel({
                 <div className="flex items-center gap-1">
                     {cart.length > 0 && (
                         <button
+                            type="button"
                             onClick={clearCart}
-                            className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                            aria-label="Kosongkan keranjang"
+                            className="flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600"
                         >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 aria-hidden="true" className="h-4 w-4" />
                         </button>
                     )}
                 </div>
@@ -96,7 +157,9 @@ export function CheckoutPanel({
             <div className="flex-1 overflow-y-auto">
                 {cart.length === 0 && (
                     <div className="flex flex-col items-center justify-center px-4 py-16 text-center">
-                        <div className="text-3xl">🛒</div>
+                        <div className="text-3xl" aria-hidden="true">
+                            🛒
+                        </div>
                         <div className="mt-3 text-sm font-semibold text-slate-500">
                             Keranjang kosong
                         </div>
@@ -128,19 +191,29 @@ export function CheckoutPanel({
 
                                 <div className="flex items-center gap-1.5">
                                     <button
+                                        type="button"
                                         onClick={() => updateQty(item.id, -1)}
-                                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50"
+                                        aria-label={`Kurangi jumlah ${getProductLabel(item)}`}
+                                        className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50"
                                     >
-                                        <Minus className="h-3.5 w-3.5" />
+                                        <Minus
+                                            aria-hidden="true"
+                                            className="h-3.5 w-3.5"
+                                        />
                                     </button>
                                     <span className="w-8 text-center text-sm font-bold text-slate-950">
                                         {item.qty}
                                     </span>
                                     <button
+                                        type="button"
                                         onClick={() => updateQty(item.id, 1)}
-                                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50"
+                                        aria-label={`Tambah jumlah ${getProductLabel(item)}`}
+                                        className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50"
                                     >
-                                        <Plus className="h-3.5 w-3.5" />
+                                        <Plus
+                                            aria-hidden="true"
+                                            className="h-3.5 w-3.5"
+                                        />
                                     </button>
                                 </div>
 
@@ -152,11 +225,15 @@ export function CheckoutPanel({
                                         )}
                                     </div>
                                     <button
+                                        type="button"
                                         onClick={() => removeItem(item.id)}
-                                        className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
-                                        title="Hapus item"
+                                        aria-label={`Hapus ${getProductLabel(item)} dari keranjang`}
+                                        className="flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-red-50 hover:text-red-500"
                                     >
-                                        <Trash2 className="h-3.5 w-3.5" />
+                                        <Trash2
+                                            aria-hidden="true"
+                                            className="h-3.5 w-3.5"
+                                        />
                                     </button>
                                 </div>
                             </div>
@@ -173,9 +250,11 @@ export function CheckoutPanel({
                 {/* Customer Type Toggle */}
                 <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
                     <button
+                        type="button"
                         onClick={() => onCustomerTypeChange('general')}
+                        aria-pressed={!isWorkshop}
                         className={cn(
-                            'flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors',
+                            'min-h-11 flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors',
                             !isWorkshop
                                 ? 'border border-slate-200 bg-white text-slate-950'
                                 : 'text-slate-500',
@@ -184,9 +263,11 @@ export function CheckoutPanel({
                         Umum
                     </button>
                     <button
+                        type="button"
                         onClick={() => onCustomerTypeChange('workshop')}
+                        aria-pressed={isWorkshop}
                         className={cn(
-                            'flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors',
+                            'min-h-11 flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors',
                             isWorkshop
                                 ? 'border border-slate-200 bg-white text-amber-700'
                                 : 'text-slate-500',
@@ -215,9 +296,10 @@ export function CheckoutPanel({
 
                 {/* CTA */}
                 <button
+                    type="button"
                     onClick={onSaveDraft}
                     disabled={cart.length === 0}
-                    className="w-full rounded-lg bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="min-h-12 w-full rounded-lg bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                     Bayar Sekarang
                 </button>

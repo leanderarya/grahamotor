@@ -1,9 +1,18 @@
-import { cn } from '@/lib/utils';
-import { Search, ChevronDown, BarChart3, Calculator, LogOut, History, Settings, Printer } from 'lucide-react';
-import { useState, useRef, useEffect } from 'react';
-import { router, Link } from '@inertiajs/react';
-import { route } from 'ziggy-js';
 import { notifyWarning } from '@/Components/app-notifications';
+import { cn } from '@/lib/utils';
+import { Link, router } from '@inertiajs/react';
+import {
+    BarChart3,
+    Calculator,
+    ChevronDown,
+    History,
+    LogOut,
+    Printer,
+    Search,
+    Settings,
+} from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { route } from 'ziggy-js';
 
 interface TopBarProps {
     search: string;
@@ -21,22 +30,27 @@ export function TopBar({
     onSettlementClick,
 }: TopBarProps) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
-    const [hasSavedPrinter, setHasSavedPrinter] = useState(false);
+    const [hasSavedPrinter] = useState(
+        () =>
+            typeof window !== 'undefined' &&
+            !!window.localStorage.getItem('printer_device'),
+    );
     const dropdownRef = useRef<HTMLDivElement>(null);
+    const prefetch = (name: string) =>
+        router.prefetch(route(name), {}, { cacheFor: '3s' });
 
     useEffect(() => {
         function handleClickOutside(e: MouseEvent) {
-            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+            if (
+                dropdownRef.current &&
+                !dropdownRef.current.contains(e.target as Node)
+            ) {
                 setDropdownOpen(false);
             }
         }
         document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
-
-    useEffect(() => {
-        const saved = localStorage.getItem('printer_device');
-        setHasSavedPrinter(!!saved);
+        return () =>
+            document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
     return (
@@ -78,17 +92,27 @@ export function TopBar({
                             ? 'bg-emerald-500 hover:bg-emerald-600'
                             : 'bg-red-500 hover:bg-red-600',
                     )}
-                    title={hasOpenSession ? 'Sesi aktif — tap untuk settlement' : 'Belum buka kasir'}
+                    title={
+                        hasOpenSession
+                            ? 'Sesi aktif — tap untuk settlement'
+                            : 'Belum buka kasir'
+                    }
                 />
 
                 {/* Printer Status */}
                 <Link
                     href={route('settings.printer')}
                     className="relative"
-                    title={hasSavedPrinter ? 'Printer terkonfigurasi' : 'Printer belum dikonfigurasi'}
+                    title={
+                        hasSavedPrinter
+                            ? 'Printer terkonfigurasi'
+                            : 'Printer belum dikonfigurasi'
+                    }
                 >
                     <Printer className="h-4 w-4 text-slate-400" />
-                    <span className={`absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full ${hasSavedPrinter ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                    <span
+                        className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full ${hasSavedPrinter ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                    />
                 </Link>
 
                 {/* Avatar Dropdown */}
@@ -104,7 +128,7 @@ export function TopBar({
                     </button>
 
                     {dropdownOpen && (
-                        <div className="absolute right-0 top-full z-50 mt-1 w-52 rounded-xl border border-slate-200 bg-white py-1">
+                        <div className="absolute top-full right-0 z-50 mt-1 w-52 rounded-xl border border-slate-200 bg-white py-1">
                             <div className="px-4 py-2.5">
                                 <div className="text-sm font-semibold text-slate-950">
                                     {userName}
@@ -115,6 +139,13 @@ export function TopBar({
                             </div>
                             <div className="border-t border-slate-100" />
                             <button
+                                onPointerEnter={() =>
+                                    prefetch('transactions.recap')
+                                }
+                                onFocus={() => prefetch('transactions.recap')}
+                                onTouchStart={() =>
+                                    prefetch('transactions.recap')
+                                }
                                 onClick={() => {
                                     setDropdownOpen(false);
                                     router.visit(route('transactions.recap'));
@@ -125,6 +156,13 @@ export function TopBar({
                                 Rekap Penjualan
                             </button>
                             <button
+                                onPointerEnter={() =>
+                                    prefetch('transactions.history')
+                                }
+                                onFocus={() => prefetch('transactions.history')}
+                                onTouchStart={() =>
+                                    prefetch('transactions.history')
+                                }
                                 onClick={() => {
                                     setDropdownOpen(false);
                                     router.visit(route('transactions.history'));
@@ -135,6 +173,13 @@ export function TopBar({
                                 Riwayat Penjualan
                             </button>
                             <button
+                                onPointerEnter={() =>
+                                    prefetch('settings.printer')
+                                }
+                                onFocus={() => prefetch('settings.printer')}
+                                onTouchStart={() =>
+                                    prefetch('settings.printer')
+                                }
                                 onClick={() => {
                                     setDropdownOpen(false);
                                     router.visit(route('settings.printer'));
