@@ -1,20 +1,21 @@
-name: Deploy Production
+name: Deploy Graha Motor
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: deploy-production
-  cancel-in-progress: true
+  group: grahamotor-release
+  cancel-in-progress: false
 
 jobs:
   test-and-build:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    outputs:
+      release-digest: ${{ steps.package-release.outputs.digest }}
     services:
       mysql:
         image: mysql:8.0
@@ -31,104 +32,320 @@ jobs:
           --health-timeout=5s
           --health-retries=10
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          php-version: '8.2'
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
+        with:
+          php-version: '8.3'
           tools: composer:v2
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
           cache: npm
 
-      - name: Install Node deps
+      - name: Install Node dependencies
         run: npm ci
 
-      - name: Install PHP deps
+      - name: Install PHP dependencies
         run: composer install --no-interaction --prefer-dist --optimize-autoloader
 
-      - name: Build assets
-        run: npm run build
-
-      - name: Prepare env
+      - name: Prepare test database
         run: |
           cp .env.example .env
           printf '\nDB_CONNECTION=mysql\nDB_HOST=127.0.0.1\nDB_PORT=3306\nDB_DATABASE=testing\nDB_USERNAME=testing\nDB_PASSWORD=testing\n' >> .env
           php artisan key:generate
           php artisan migrate --force
 
-      - name: Diagnostic status
-        run: |
-          git status --short
-          printf 'branch: '
-          git branch --show-current
-
       - name: Run tests
         run: ./vendor/bin/phpunit
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+      - name: Build assets
+        run: npm run build
+
+      - name: Prepare release artifact
+        id: package-release
+        run: |
+          set -euo pipefail
+          mkdir -p release-payload/public-build
+          cp -a public/build/. release-payload/public-build/
+          cp scripts/create-database-backup.php release-payload/
+          if find release-payload -type l -print -quit | grep -q .; then
+            echo 'Release payload contains a symlink' >&2
+            exit 1
+          fi
+          tar -czf release-payload.tar.gz -C release-payload .
+          digest="$(sha256sum release-payload.tar.gz | cut -d ' ' -f 1)"
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: public-build
-          path: public/build
+          name: release-payload
+          path: release-payload.tar.gz
           if-no-files-found: error
+          retention-days: 7
 
-  deploy:
+  staging:
     needs: test-and-build
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    outputs:
+      release-digest: ${{ needs.test-and-build.outputs.release-digest }}
+    environment:
+      name: staging
     steps:
-      - name: Download build artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          name: public-build
-          path: public-build
+          ref: ${{ github.sha }}
+          persist-credentials: false
 
-      - name: Transfer build artifact over SSH
-        uses: appleboy/scp-action@v0.1.7
+      - name: Download release artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          host: ${{ secrets.HOSTINGER_SSH_HOST }}
-          username: ${{ secrets.HOSTINGER_SSH_USER }}
-          port: ${{ secrets.HOSTINGER_SSH_PORT }}
-          key: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
-          source: public-build/*
+          name: release-payload
+          path: release-artifact
+
+      - name: Verify and extract release artifact
+        env:
+          EXPECTED_RELEASE_DIGEST: ${{ needs.test-and-build.outputs.release-digest }}
+        run: |
+          set -euo pipefail
+          test -n "$EXPECTED_RELEASE_DIGEST"
+          actual_digest="$(sha256sum release-artifact/release-payload.tar.gz | cut -d ' ' -f 1)"
+          test "$actual_digest" = "$EXPECTED_RELEASE_DIGEST"
+          tar -tzf release-artifact/release-payload.tar.gz > release-artifact/contents.txt
+          while IFS= read -r entry; do
+            case "$entry" in
+              /*|../*|*/../*|*/..)
+                echo 'Release artifact contains an unsafe path' >&2
+                exit 1
+                ;;
+            esac
+          done < release-artifact/contents.txt
+          mkdir release-payload
+          tar -xzf release-artifact/release-payload.tar.gz -C release-payload
+          test -d release-payload/public-build
+          test ! -L release-payload/public-build
+          test -f release-payload/create-database-backup.php
+          test ! -L release-payload/create-database-backup.php
+          if find release-payload -type l -print -quit | grep -q .; then
+            echo 'Release artifact contains a symlink' >&2
+            exit 1
+          fi
+          printf 'Release commit: %s\nArtifact SHA-256: %s\n' "$GITHUB_SHA" "$actual_digest"
+
+      - name: Require staging SSH host fingerprint
+        env:
+          SSH_FINGERPRINT: ${{ secrets.STAGING_HOSTINGER_SSH_FINGERPRINT }}
+          SSH_PORT: ${{ secrets.STAGING_HOSTINGER_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          : "${SSH_FINGERPRINT:?STAGING_HOSTINGER_SSH_FINGERPRINT must be configured}"
+          : "${SSH_PORT:?STAGING_HOSTINGER_SSH_PORT must be configured}"
+          [[ "$SSH_FINGERPRINT" =~ ^SHA256:[A-Za-z0-9+/]{43}=?$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          (( 10#$SSH_PORT >= 1 && 10#$SSH_PORT <= 65535 ))
+
+      - name: Prepare run-specific staging directory
+        id: prepare-staging
+        uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
+        env:
+          DEPLOYMENT_MODE: prepare
+          DEPLOY_RUN_ID: ${{ github.run_id }}
+        with:
+          host: ${{ secrets.STAGING_HOSTINGER_SSH_HOST }}
+          username: ${{ secrets.STAGING_HOSTINGER_SSH_USER }}
+          port: ${{ secrets.STAGING_HOSTINGER_SSH_PORT }}
+          key: ${{ secrets.STAGING_HOSTINGER_SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.STAGING_HOSTINGER_SSH_FINGERPRINT }}
+          envs: DEPLOYMENT_MODE,DEPLOY_RUN_ID
+          script_path: scripts/hostinger-deploy.sh
+
+      - name: Upload release artifact to staging host
+        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
+        with:
+          host: ${{ secrets.STAGING_HOSTINGER_SSH_HOST }}
+          username: ${{ secrets.STAGING_HOSTINGER_SSH_USER }}
+          port: ${{ secrets.STAGING_HOSTINGER_SSH_PORT }}
+          key: ${{ secrets.STAGING_HOSTINGER_SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.STAGING_HOSTINGER_SSH_FINGERPRINT }}
+          source: release-payload/*
           target: /home/u163968914/grahamotor-build-${{ github.run_id }}
 
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.2
+      - name: Deploy to staging
+        uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
+        env:
+          DEPLOYMENT_MODE: deploy
+          DEPLOY_ENV: staging
+          DEPLOY_RUN_ID: ${{ github.run_id }}
+          DEPLOY_RUN_ATTEMPT: ${{ github.run_attempt }}
+          DEPLOY_SHA: ${{ github.sha }}
+          STAGING_APP_PATH: ${{ vars.STAGING_APP_PATH }}
+        with:
+          host: ${{ secrets.STAGING_HOSTINGER_SSH_HOST }}
+          username: ${{ secrets.STAGING_HOSTINGER_SSH_USER }}
+          port: ${{ secrets.STAGING_HOSTINGER_SSH_PORT }}
+          key: ${{ secrets.STAGING_HOSTINGER_SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.STAGING_HOSTINGER_SSH_FINGERPRINT }}
+          command_timeout: 30m
+          envs: DEPLOYMENT_MODE,DEPLOY_ENV,DEPLOY_RUN_ID,DEPLOY_RUN_ATTEMPT,DEPLOY_SHA,STAGING_APP_PATH
+          script_path: scripts/hostinger-deploy.sh
+
+      - name: Verify staging health
+        env:
+          HEALTHCHECK_URL: ${{ vars.STAGING_HEALTHCHECK_URL }}
+        run: |
+          set -euo pipefail
+          : "${HEALTHCHECK_URL:?STAGING_HEALTHCHECK_URL must be configured}"
+          [[ "$HEALTHCHECK_URL" == https://* ]]
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 --retry-connrefused \
+            --output /dev/null --write-out 'Staging HTTP %{http_code}\n' "$HEALTHCHECK_URL"
+
+      - name: Clean run-specific staging directory
+        if: ${{ always() && steps.prepare-staging.conclusion == 'success' }}
+        uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
+        env:
+          DEPLOYMENT_MODE: cleanup
+          DEPLOY_RUN_ID: ${{ github.run_id }}
+        with:
+          host: ${{ secrets.STAGING_HOSTINGER_SSH_HOST }}
+          username: ${{ secrets.STAGING_HOSTINGER_SSH_USER }}
+          port: ${{ secrets.STAGING_HOSTINGER_SSH_PORT }}
+          key: ${{ secrets.STAGING_HOSTINGER_SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.STAGING_HOSTINGER_SSH_FINGERPRINT }}
+          envs: DEPLOYMENT_MODE,DEPLOY_RUN_ID
+          script_path: scripts/hostinger-deploy.sh
+
+  production:
+    needs: staging
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download release artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-payload
+          path: release-artifact
+
+      - name: Verify and extract release artifact
+        env:
+          EXPECTED_RELEASE_DIGEST: ${{ needs.staging.outputs.release-digest }}
+        run: |
+          set -euo pipefail
+          test -n "$EXPECTED_RELEASE_DIGEST"
+          actual_digest="$(sha256sum release-artifact/release-payload.tar.gz | cut -d ' ' -f 1)"
+          test "$actual_digest" = "$EXPECTED_RELEASE_DIGEST"
+          tar -tzf release-artifact/release-payload.tar.gz > release-artifact/contents.txt
+          while IFS= read -r entry; do
+            case "$entry" in
+              /*|../*|*/../*|*/..)
+                echo 'Release artifact contains an unsafe path' >&2
+                exit 1
+                ;;
+            esac
+          done < release-artifact/contents.txt
+          mkdir release-payload
+          tar -xzf release-artifact/release-payload.tar.gz -C release-payload
+          test -d release-payload/public-build
+          test ! -L release-payload/public-build
+          test -f release-payload/create-database-backup.php
+          test ! -L release-payload/create-database-backup.php
+          if find release-payload -type l -print -quit | grep -q .; then
+            echo 'Release artifact contains a symlink' >&2
+            exit 1
+          fi
+          printf 'Release commit: %s\nArtifact SHA-256: %s\n' "$GITHUB_SHA" "$actual_digest"
+
+      - name: Require production SSH host fingerprint
+        env:
+          SSH_FINGERPRINT: ${{ secrets.HOSTINGER_SSH_FINGERPRINT }}
+          SSH_PORT: ${{ secrets.HOSTINGER_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          : "${SSH_FINGERPRINT:?HOSTINGER_SSH_FINGERPRINT must be configured}"
+          : "${SSH_PORT:?HOSTINGER_SSH_PORT must be configured}"
+          [[ "$SSH_FINGERPRINT" =~ ^SHA256:[A-Za-z0-9+/]{43}=?$ ]]
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          (( 10#$SSH_PORT >= 1 && 10#$SSH_PORT <= 65535 ))
+
+      - name: Prepare run-specific staging directory
+        id: prepare-production
+        uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
+        env:
+          DEPLOYMENT_MODE: prepare
+          DEPLOY_RUN_ID: ${{ github.run_id }}
         with:
           host: ${{ secrets.HOSTINGER_SSH_HOST }}
           username: ${{ secrets.HOSTINGER_SSH_USER }}
           port: ${{ secrets.HOSTINGER_SSH_PORT }}
           key: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
-          command_timeout: 20m
-          script: |
-            set -eux
-             repo=/home/u163968914/domains/cahayaarkana.site/public_html/grahamotor
-             build=/home/u163968914/grahamotor-build-${{ github.run_id }}
-             trap 'rm -rf "$build"' EXIT
-             cd "$repo"
-            test "$(git remote get-url origin)" = "https://github.com/leanderarya/grahamotor.git"
-            git restore public/build
-            git clean -fd public/build
-            test -z "$(git status --porcelain --untracked-files=all)"
-            test "$(git branch --show-current)" = "main"
-            git fetch origin main
-            git checkout main
-            git pull --ff-only origin main
-             rm -rf public/build
-             mkdir -p public/build
-             cp -a "$build"/public-build/. public/build/
-            composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
-            php artisan tinker --execute='Schema::table("users", fn ($table) => $table->string("pin", 255)->change());'
-            php artisan migrate --force
-            php artisan storage:link
-            php artisan optimize:clear
-            php artisan config:cache
-            php artisan route:cache
-            php artisan view:cache
-            php artisan event:cache
-            php artisan about
+          fingerprint: ${{ secrets.HOSTINGER_SSH_FINGERPRINT }}
+          envs: DEPLOYMENT_MODE,DEPLOY_RUN_ID
+          script_path: scripts/hostinger-deploy.sh
+
+      - name: Upload release artifact to production host
+        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
+        with:
+          host: ${{ secrets.HOSTINGER_SSH_HOST }}
+          username: ${{ secrets.HOSTINGER_SSH_USER }}
+          port: ${{ secrets.HOSTINGER_SSH_PORT }}
+          key: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.HOSTINGER_SSH_FINGERPRINT }}
+          source: release-payload/*
+          target: /home/u163968914/grahamotor-build-${{ github.run_id }}
+
+      - name: Deploy to production
+        uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
+        env:
+          DEPLOYMENT_MODE: deploy
+          DEPLOY_ENV: production
+          DEPLOY_RUN_ID: ${{ github.run_id }}
+          DEPLOY_RUN_ATTEMPT: ${{ github.run_attempt }}
+          DEPLOY_SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.HOSTINGER_SSH_HOST }}
+          username: ${{ secrets.HOSTINGER_SSH_USER }}
+          port: ${{ secrets.HOSTINGER_SSH_PORT }}
+          key: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.HOSTINGER_SSH_FINGERPRINT }}
+          command_timeout: 30m
+          envs: DEPLOYMENT_MODE,DEPLOY_ENV,DEPLOY_RUN_ID,DEPLOY_RUN_ATTEMPT,DEPLOY_SHA
+          script_path: scripts/hostinger-deploy.sh
+
+      - name: Verify production health
+        env:
+          HEALTHCHECK_URL: ${{ vars.PRODUCTION_HEALTHCHECK_URL }}
+        run: |
+          set -euo pipefail
+          : "${HEALTHCHECK_URL:?PRODUCTION_HEALTHCHECK_URL must be configured}"
+          [[ "$HEALTHCHECK_URL" == https://* ]]
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 --retry-connrefused \
+            --output /dev/null --write-out 'Production HTTP %{http_code}\n' "$HEALTHCHECK_URL"
+
+      - name: Clean run-specific staging directory
+        if: ${{ always() && steps.prepare-production.conclusion == 'success' }}
+        uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
+        env:
+          DEPLOYMENT_MODE: cleanup
+          DEPLOY_RUN_ID: ${{ github.run_id }}
+        with:
+          host: ${{ secrets.HOSTINGER_SSH_HOST }}
+          username: ${{ secrets.HOSTINGER_SSH_USER }}
+          port: ${{ secrets.HOSTINGER_SSH_PORT }}
+          key: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
+          fingerprint: ${{ secrets.HOSTINGER_SSH_FINGERPRINT }}
+          envs: DEPLOYMENT_MODE,DEPLOY_RUN_ID
+          script_path: scripts/hostinger-deploy.sh

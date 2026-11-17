@@ -1,0 +1,193 @@
+#!/bin/bash
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+export DEPLOYMENT_LIBRARY_ONLY=1
+# shellcheck disable=SC1091
+source "$repo_root/scripts/hostinger-deploy.sh"
+unset DEPLOYMENT_LIBRARY_ONLY
+
+temporary_root="$(cd "$(mktemp -d)" && pwd -P)"
+trap 'rm -rf -- "$temporary_root"' EXIT
+
+pass() {
+    printf 'PASS: %s\n' "$1"
+}
+
+expect_rejected() {
+    local label="$1"
+    shift
+    if "$@" >/dev/null 2>&1; then
+        printf 'FAIL: %s unexpectedly succeeded\n' "$label" >&2
+        exit 1
+    fi
+    pass "$label"
+}
+
+approved_parent="$temporary_root/approved"
+sibling="$temporary_root/sibling"
+mkdir "$approved_parent" "$sibling"
+printf 'sibling sentinel\n' > "$sibling/sentinel"
+
+valid_target="$approved_parent/grahamotor-build-12345"
+mkdir "$valid_target"
+printf 'release\n' > "$valid_target/payload"
+deployment_safe_remove_staging_target "$approved_parent" "$valid_target" 12345
+test ! -e "$valid_target"
+test -d "$approved_parent"
+test -f "$sibling/sentinel"
+pass 'valid cleanup removes only the run-specific target'
+
+mkdir "$valid_target"
+expect_rejected 'empty run ID rejected before removal' \
+    deployment_safe_remove_staging_target "$approved_parent" "$valid_target" ''
+test -d "$valid_target"
+
+expect_rejected 'malformed run ID rejected before removal' \
+    deployment_safe_remove_staging_target "$approved_parent" "$valid_target" '123x'
+test -d "$valid_target"
+
+expect_rejected 'empty cleanup path rejected' \
+    deployment_safe_remove_staging_target '' '' 12345
+test -d "$valid_target"
+
+expect_rejected 'traversal target rejected' \
+    deployment_safe_remove_staging_target "$approved_parent" "$approved_parent/../sibling" 12345
+test -f "$sibling/sentinel"
+
+expect_rejected 'unexpected run-specific path rejected' \
+    deployment_safe_remove_staging_target "$approved_parent" "$approved_parent/other-build-12345" 12345
+test -d "$valid_target"
+
+symlink_parent="$temporary_root/approved-link"
+ln -s "$approved_parent" "$symlink_parent"
+expect_rejected 'symlink parent rejected' \
+    deployment_safe_remove_staging_target "$symlink_parent" "$symlink_parent/grahamotor-build-12345" 12345
+test -d "$valid_target"
+
+rm -rf "$valid_target"
+ln -s "$sibling" "$valid_target"
+expect_rejected 'symlink target rejected before recursive removal' \
+    deployment_safe_remove_staging_target "$approved_parent" "$valid_target" 12345
+test -L "$valid_target"
+test -f "$sibling/sentinel"
+rm "$valid_target"
+
+project_root="$temporary_root/project"
+mkdir -p "$project_root/.git" "$project_root/public/build" "$project_root/public/neighbor"
+printf 'generated\n' > "$project_root/public/build/manifest.json"
+printf 'keep\n' > "$project_root/public/neighbor/keep.txt"
+deployment_clear_public_build "$project_root"
+test -d "$project_root/public/build"
+test -z "$(find "$project_root/public/build" -mindepth 1 -print -quit)"
+test -f "$project_root/public/neighbor/keep.txt"
+pass 'asset cleanup is limited to public/build'
+
+outside_assets="$temporary_root/outside-assets"
+mkdir "$outside_assets"
+printf 'preserve\n' > "$outside_assets/keep.txt"
+rmdir "$project_root/public/build"
+ln -s "$outside_assets" "$project_root/public/build"
+expect_rejected 'symlink public/build rejected' deployment_clear_public_build "$project_root"
+test -L "$project_root/public/build"
+test -f "$outside_assets/keep.txt"
+test -f "$project_root/public/neighbor/keep.txt"
+pass 'asset cleanup preserves symlink targets and sibling paths'
+
+home="$temporary_root/home"
+backup_root="$home/grahamotor-backups"
+mkdir -m 700 -p "$backup_root"
+export HOME="$home"
+
+backup_sha='0123456789abcdef0123456789abcdef01234567'
+backup_name="staging-12345-1-$backup_sha.sql.gz"
+printf '%s\n' '-- MySQL dump test data' | gzip > "$backup_root/$backup_name"
+backup_hash="$(php -r 'echo hash_file("sha256", $argv[1]);' -- "$backup_root/$backup_name")"
+printf '%s  %s\n' "$backup_hash" "$backup_name" > "$backup_root/$backup_name.sha256"
+deployment_verify_database_backup staging 12345 1 "$backup_sha"
+pass 'valid compressed database backup and checksum evidence accepted'
+
+backup_test_app="$temporary_root/backup-test-app"
+fake_bin="$temporary_root/fake-bin"
+mkdir -p "$backup_test_app/.git" "$backup_test_app/vendor" "$backup_test_app/bootstrap" "$fake_bin"
+: > "$backup_test_app/vendor/autoload.php"
+cat > "$backup_test_app/bootstrap/app.php" <<'PHP'
+<?php
+function config(string $key): mixed
+{
+    return match ($key) {
+        'database.default' => 'mysql',
+        'database.connections.mysql' => [
+            'driver' => 'mysql',
+            'host' => '127.0.0.1',
+            'port' => '3306',
+            'database' => 'testing',
+            'username' => 'testing',
+            'password' => 'backup-test-secret',
+        ],
+        default => null,
+    };
+}
+
+return new class {
+    public function make(string $class): object
+    {
+        return new class {
+            public function bootstrap(): void {}
+        };
+    }
+};
+PHP
+cat > "$fake_bin/mysqldump" <<'SH'
+#!/bin/sh
+[ "${MYSQL_PWD-}" = 'backup-test-secret' ] || exit 7
+printf '%s\n' '-- MySQL dump 8.0' 'CREATE TABLE `example` (`id` INT);'
+SH
+chmod 700 "$fake_bin/mysqldump"
+backup_create_sha='abcdef0123456789abcdef0123456789abcdef01'
+backup_output="$(PATH="$fake_bin:$PATH" php "$repo_root/scripts/create-database-backup.php" \
+    "$backup_test_app" staging 67890 1 "$backup_create_sha")"
+case "$backup_output" in
+    *backup-test-secret*) printf 'FAIL: backup helper printed database credentials\n' >&2; exit 1 ;;
+esac
+deployment_verify_database_backup staging 67890 1 "$backup_create_sha"
+pass 'backup helper creates verifiable evidence without logging credentials'
+
+failed_backup_bin="$temporary_root/failing-bin"
+mkdir "$failed_backup_bin"
+cat > "$failed_backup_bin/mysqldump" <<'SH'
+#!/bin/sh
+printf '%s\n' '-- MySQL dump 8.0' 'partial output'
+exit 1
+SH
+chmod 700 "$failed_backup_bin/mysqldump"
+expect_rejected 'failed mysqldump exits before evidence can pass' \
+    env PATH="$failed_backup_bin:$PATH" php "$repo_root/scripts/create-database-backup.php" \
+    "$backup_test_app" staging 67890 2 "$backup_create_sha"
+test ! -e "$backup_root/staging-67890-2-$backup_create_sha.sql.gz"
+pass 'failed database export leaves no accepted backup evidence'
+
+expect_rejected 'missing backup evidence rejected' \
+    deployment_verify_database_backup production 12345 1 "$backup_sha"
+
+expect_rejected 'empty backup run ID rejected' \
+    deployment_verify_database_backup staging '' 1 "$backup_sha"
+
+printf '%s  %s\n' "$(printf '%064d' 0)" "$backup_name" > "$backup_root/$backup_name.sha256"
+expect_rejected 'mismatched backup checksum rejected' \
+    deployment_verify_database_backup staging 12345 1 "$backup_sha"
+
+rm "$backup_root/$backup_name.sha256"
+printf 'not gzip\n' > "$backup_root/$backup_name"
+backup_hash="$(php -r 'echo hash_file("sha256", $argv[1]);' -- "$backup_root/$backup_name")"
+printf '%s  %s\n' "$backup_hash" "$backup_name" > "$backup_root/$backup_name.sha256"
+expect_rejected 'corrupt backup rejected' \
+    deployment_verify_database_backup staging 12345 1 "$backup_sha"
+
+test -f "$sibling/sentinel"
+test -d "$approved_parent"
+pass 'cleanup guards preserve parent and sibling directories'
+
+expect_rejected 'remote prepare mode rejects an empty run ID' \
+    env DEPLOYMENT_MODE=prepare DEPLOY_RUN_ID='' sh "$repo_root/scripts/hostinger-deploy.sh"
