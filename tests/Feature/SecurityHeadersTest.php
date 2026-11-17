@@ -33,8 +33,8 @@ class SecurityHeadersTest extends TestCase
             'meta property="csp-nonce" nonce="'.$firstNonce[1].'"',
             $firstResponse->getContent(),
         );
-        $this->assertStringContainsString(
-            'nonce="'.$firstNonce[1].'">const Ziggy=',
+        $this->assertMatchesRegularExpression(
+            '/<script\b[^>]*\bnonce="'.preg_quote($firstNonce[1], '/').'"[^>]*>(?:const Ziggy=|Object\.assign\(Ziggy\.routes,)/',
             $firstResponse->getContent(),
         );
 
