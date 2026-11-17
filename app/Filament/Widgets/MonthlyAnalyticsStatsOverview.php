@@ -24,14 +24,19 @@ class MonthlyAnalyticsStatsOverview extends StatsOverviewWidget
         $previousMonthEnd = $month->copy()->subMonth()->endOfMonth();
 
         // Query 1: Current month aggregate (paid only)
-        $monthAgg = Transaction::query()
+        $canViewProfit = auth()->user()?->isOwner() ?? false;
+        $monthAggQuery = Transaction::query()
             ->where('status', 'paid')
             ->whereBetween('created_at', [$monthStart, $monthEnd])
             ->selectRaw('COALESCE(SUM(total_amount), 0) as revenue')
-            ->selectRaw('COALESCE(SUM(total_profit), 0) as profit')
             ->selectRaw('COUNT(*) as record_count')
-            ->selectRaw('COUNT(DISTINCT DATE(created_at)) as active_days')
-            ->first();
+            ->selectRaw('COUNT(DISTINCT DATE(created_at)) as active_days');
+
+        if ($canViewProfit) {
+            $monthAggQuery->selectRaw('COALESCE(SUM(total_profit), 0) as profit');
+        }
+
+        $monthAgg = $monthAggQuery->first();
 
         // Query 2: Best daily revenue for current month (paid only)
         $bestDaily = Transaction::query()
@@ -51,22 +56,16 @@ class MonthlyAnalyticsStatsOverview extends StatsOverviewWidget
             ->sum('total_amount');
 
         $monthlyRevenue = (float) $monthAgg->revenue;
-        $monthlyProfit = (float) $monthAgg->profit;
         $recordCount = (int) $monthAgg->record_count;
         $activeDays = (int) $monthAgg->active_days;
         $averageRevenue = $activeDays > 0 ? $monthlyRevenue / $activeDays : 0;
         $bestDailyRevenue = (float) $bestDaily;
 
-        return [
+        $stats = [
             Stat::make('Omset '.$month->translatedFormat('F Y'), $this->formatCurrency($monthlyRevenue))
                 ->description($this->makeComparisonText($monthlyRevenue, $previousRevenue))
                 ->descriptionIcon($monthlyRevenue >= $previousRevenue ? 'heroicon-m-arrow-trending-up' : 'heroicon-m-arrow-trending-down')
                 ->color($monthlyRevenue >= $previousRevenue ? 'success' : 'danger'),
-
-            Stat::make('Profit Bulanan', $this->formatCurrency($monthlyProfit))
-                ->description('Akumulasi margin bulan terpilih')
-                ->descriptionIcon('heroicon-m-banknotes')
-                ->color('primary'),
 
             Stat::make('Hari Aktif', number_format($activeDays, 0, ',', '.'))
                 ->description('Jumlah hari dengan transaksi')
@@ -88,6 +87,17 @@ class MonthlyAnalyticsStatsOverview extends StatsOverviewWidget
                 ->descriptionIcon('heroicon-m-fire')
                 ->color('success'),
         ];
+
+        if ($canViewProfit) {
+            array_splice($stats, 1, 0, [
+                Stat::make('Profit Bulanan', $this->formatCurrency((float) $monthAgg->profit))
+                    ->description('Akumulasi margin bulan terpilih')
+                    ->descriptionIcon('heroicon-m-banknotes')
+                    ->color('primary'),
+            ]);
+        }
+
+        return $stats;
     }
 
     private function formatCurrency(float $value): string

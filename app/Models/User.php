@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Hash;
 use Laravel\Fortify\TwoFactorAuthenticatable;
 use Laravel\Sanctum\HasApiTokens;
 use Filament\Models\Contracts\FilamentUser;
@@ -17,6 +18,10 @@ class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, HasApiTokens, Notifiable, TwoFactorAuthenticatable;
+
+    protected $attributes = [
+        'is_active' => true,
+    ];
 
     /**
      * The attributes that are mass assignable.
@@ -38,6 +43,7 @@ class User extends Authenticatable implements FilamentUser
      */
     protected $hidden = [
         'password',
+        'pin',
         'two_factor_secret',
         'two_factor_recovery_codes',
         'remember_token',
@@ -54,6 +60,7 @@ class User extends Authenticatable implements FilamentUser
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'pin' => 'hashed',
+            'is_active' => 'boolean',
             'two_factor_confirmed_at' => 'datetime',
         ];
     }
@@ -61,14 +68,44 @@ class User extends Authenticatable implements FilamentUser
     // Update method ini
     public function canAccessPanel(Panel $panel): bool
     {
-        // Sekarang cek kolom role, bukan email lagi
+        return $this->is_active && ($this->isOwner() || $this->isAdmin());
+    }
+
+    public function isOwner(): bool
+    {
+        return $this->role === 'owner';
+    }
+
+    public function isAdmin(): bool
+    {
         return $this->role === 'admin';
     }
 
-    // Helper untuk cek di Frontend nanti
-    public function isAdmin()
+    public function isCashier(): bool
     {
-        return $this->role === 'admin';
+        return $this->is_active && $this->role === 'kasir';
+    }
+
+    public static function findCashierForPin(string $pin): ?self
+    {
+        $matches = static::query()
+            ->where('role', 'kasir')
+            ->where('is_active', true)
+            ->whereNotNull('pin')
+            ->get()
+            ->filter(fn (self $user): bool => Hash::check($pin, $user->pin));
+
+        return $matches->count() === 1 ? $matches->first() : null;
+    }
+
+    public static function cashierPinExists(string $pin, ?int $ignoreUserId = null): bool
+    {
+        return static::query()
+            ->where('role', 'kasir')
+            ->whereNotNull('pin')
+            ->when($ignoreUserId, fn ($query) => $query->where('id', '<>', $ignoreUserId))
+            ->get(['id', 'pin'])
+            ->contains(fn (self $user): bool => Hash::check($pin, $user->pin));
     }
 
     public function cashierSessions(): HasMany
@@ -86,5 +123,10 @@ class User extends Authenticatable implements FilamentUser
     public function hasOpenCashierSession(): bool
     {
         return $this->openCashierSession()->exists();
+    }
+
+    public function managementAudits(): HasMany
+    {
+        return $this->hasMany(UserManagementAudit::class, 'target_user_id');
     }
 }

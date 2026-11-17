@@ -51,7 +51,7 @@ const PAYMENT_METHODS = [
 ];
 
 export default function Checkout({ draft, cashierSession }: CheckoutProps) {
-    const { flash } = usePage<SharedData>().props;
+    const { auth, flash } = usePage<SharedData>().props;
     const [paymentMethod, setPaymentMethod] = useState('cash');
     const [cashReceived, setCashReceived] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
@@ -59,6 +59,7 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
     const { print: printReceipt } = usePrintReceipt();
 
     const hasOpenSession = Boolean(cashierSession?.id);
+    const isShiftOverdue = Boolean(cashierSession?.is_overdue);
 
     const totalAmount = draft.total_amount;
 
@@ -94,10 +95,18 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
     }, [totalAmount]);
 
     const processPayment = useCallback(async () => {
-        if (!hasOpenSession) {
+        if (!cashierSession?.id) {
             notifyWarning(
                 'Buka kasir terlebih dahulu.',
                 'Sesi kasir tidak aktif',
+            );
+            return;
+        }
+
+        if (isShiftOverdue) {
+            notifyWarning(
+                'Shift melewati batas 00.00 WIB. Hubungi Admin atau Owner untuk menutup shift.',
+                'Transaksi dihentikan',
             );
             return;
         }
@@ -117,6 +126,7 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
 
         const transactionData = {
             draft_id: draft.id,
+            cashier_session_id: cashierSession.id,
             cart: draft.items.map((item) => ({
                 id: item.product_id,
                 qty: item.quantity,
@@ -131,7 +141,10 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
             // Capacitor mode
             if (!isOnline) {
                 // Offline: queue transaction
-                await offlineQueue.add(transactionData);
+                await offlineQueue.add({
+                    ...transactionData,
+                    user_id: auth.user.id,
+                });
                 notifyWarning(
                     'Transaksi disimpan offline.',
                     'Akan dikirim saat online.',
@@ -163,8 +176,12 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
                 });
 
                 router.visit(route('transactions.create'));
-            } catch (error: any) {
-                notifyError(error.message || 'Gagal memproses transaksi.');
+            } catch (error: unknown) {
+                notifyError(
+                    error instanceof Error && error.message
+                        ? error.message
+                        : 'Gagal memproses transaksi.',
+                );
             } finally {
                 setIsProcessing(false);
             }
@@ -189,7 +206,9 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
     }, [
         cashReceived,
         draft,
-        hasOpenSession,
+        isShiftOverdue,
+        cashierSession?.id,
+        auth.user.id,
         isOnline,
         paymentMethod,
         printReceipt,
@@ -200,6 +219,16 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
         <div className="min-h-screen bg-white text-slate-900">
             <Head title={`Checkout ${draft.invoice_number} - Graha Motor`} />
             <AppNotifications flash={flash} />
+
+            {isShiftOverdue && (
+                <div
+                    role="status"
+                    className="border-b border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950"
+                >
+                    Shift melewati batas 00.00 WIB. Pembayaran dihentikan.
+                    Hubungi Admin atau Owner untuk menutup shift.
+                </div>
+            )}
 
             <div className="mx-auto min-h-screen max-w-[1400px] px-3 py-3 sm:px-4 lg:grid lg:grid-cols-[55%_45%] lg:gap-4 lg:px-6">
                 {/* Left Column: Order Summary */}
@@ -413,6 +442,7 @@ export default function Checkout({ draft, cashierSession }: CheckoutProps) {
                                 onClick={processPayment}
                                 disabled={
                                     !hasOpenSession ||
+                                    isShiftOverdue ||
                                     isProcessing ||
                                     (paymentMethod === 'cash' && change < 0)
                                 }

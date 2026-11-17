@@ -20,11 +20,13 @@ Route::get('/', function () {
 
     $user = auth()->user();
 
-    if ($user->role === 'admin') {
+    if ($user->isOwner() || $user->isAdmin()) {
         return redirect('/admin');
     }
 
-    return redirect()->route('transactions.create');
+    return $user->isCashier()
+        ? redirect()->route('transactions.create')
+        : redirect()->route('pin.login');
 });
 
 Route::post('/logout', function () {
@@ -35,7 +37,7 @@ Route::post('/logout', function () {
     request()->session()->regenerateToken();
 
     // Admin balik ke login biasa, kasir ke PIN login
-    if ($user && $user->role === 'admin') {
+    if ($user && ($user->isOwner() || $user->isAdmin())) {
         return redirect('/login');
     }
 
@@ -55,11 +57,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/dashboard', function () {
         $user = auth()->user();
 
-        if ($user->role === 'admin') {
+        if ($user->isOwner() || $user->isAdmin()) {
             return redirect('/admin'); // Admin ke Filament
         }
 
-        if ($user->role === 'kasir') {
+        if ($user->isCashier()) {
             return redirect()->route('transactions.create'); // Kasir ke POS
         }
 

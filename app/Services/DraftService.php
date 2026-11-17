@@ -5,8 +5,10 @@ namespace App\Services;
 use App\Models\Product;
 use App\Models\Transaction;
 use App\Models\TransactionItem;
+use App\Models\CashierSession;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class DraftService
 {
@@ -21,21 +23,15 @@ class DraftService
      */
     public function save(Authenticatable $user, array $validated): Transaction
     {
-        $openSession = $this->sessionService->getOpenSession($user->id);
+        return DB::transaction(function () use ($validated, $user) {
+            $openSession = $this->sessionService->lockOpenSession($user->id);
+            $this->assertSessionCanSaveTo($openSession, $validated['cashier_session_id'] ?? null);
 
-        if ($openSession === null) {
-            throw new \Illuminate\Validation\ValidationException(
-                validator: null,
-                errors: ['cart' => ['Buka kasir terlebih dahulu.']]
-            );
-        }
-
-        return DB::transaction(function () use ($validated, $openSession, $user) {
             $draft = $this->findOrCreateDraft($validated, $openSession->id, $user->id);
             $this->syncDraftItems($draft, $validated['cart'], $validated['customer_type']);
 
             return $draft;
-        });
+        }, 3);
     }
 
     /**
@@ -43,41 +39,48 @@ class DraftService
      */
     public function autoSave(Authenticatable $user, array $validated): Transaction
     {
-        $openSession = $this->sessionService->getOpenSession($user->id);
+        return DB::transaction(function () use ($validated, $user) {
+            $openSession = $this->sessionService->lockOpenSession($user->id);
+            $this->assertSessionCanSaveTo($openSession, $validated['cashier_session_id'] ?? null);
 
-        if ($openSession === null) {
-            throw new \Illuminate\Validation\ValidationException(
-                validator: null,
-                errors: ['cart' => ['Buka kasir terlebih dahulu.']]
-            );
-        }
-
-        return DB::transaction(function () use ($validated, $openSession, $user) {
             $draft = $this->findOrCreateDraft($validated, $openSession->id, $user->id, allowMissing: true);
             $this->syncDraftItems($draft, $validated['cart'], $validated['customer_type']);
 
             return $draft;
-        });
+        }, 3);
     }
 
     /**
      * Clear draft(s) — optionally filtered by draft_id.
      */
-    public function clear(?int $draftId, int $userId): void
+    public function clear(?int $draftId, int $userId, ?int $expectedSessionId = null): void
     {
-        $query = Transaction::where('status', 'draft')
-            ->where('user_id', $userId);
-
-        if ($draftId) {
-            $query->where('id', $draftId);
+        if ($draftId === null) {
+            return;
         }
 
-        $drafts = $query->get();
+        DB::transaction(function () use ($draftId, $userId, $expectedSessionId): void {
+            $session = $this->sessionService->lockOpenSession($userId);
 
-        foreach ($drafts as $draft) {
-            $draft->transactionItems()->delete();
-            $draft->delete();
-        }
+            if ($session === null) {
+                return;
+            }
+
+            $this->assertSessionCanSaveTo($session, $expectedSessionId);
+
+            $query = Transaction::query()
+                ->where('status', 'draft')
+                ->where('user_id', $userId)
+                ->where('cashier_session_id', $session->id)
+                ->lockForUpdate();
+
+            $query->whereKey($draftId);
+
+            foreach ($query->get() as $draft) {
+                $draft->transactionItems()->delete();
+                $draft->delete();
+            }
+        }, 3);
     }
 
     /**
@@ -85,14 +88,29 @@ class DraftService
      */
     public function destroy(Transaction $transaction, int $userId): bool
     {
-        if ($transaction->status !== 'draft' || $transaction->user_id !== $userId) {
-            return false;
-        }
+        return DB::transaction(function () use ($transaction, $userId): bool {
+            $session = $this->sessionService->lockOpenSession($userId);
+            if ($session === null) {
+                return false;
+            }
 
-        $transaction->transactionItems()->delete();
-        $transaction->delete();
+            $this->sessionService->assertNotOverdue($session);
+            $draft = Transaction::query()->whereKey($transaction->id)->lockForUpdate()->first();
 
-        return true;
+            if (
+                ! $draft
+                || $draft->status !== 'draft'
+                || $draft->user_id !== $userId
+                || (int) $draft->cashier_session_id !== $session->id
+            ) {
+                return false;
+            }
+
+            $draft->transactionItems()->delete();
+            $draft->delete();
+
+            return true;
+        }, 3);
     }
 
     /**
@@ -104,9 +122,16 @@ class DraftService
             $draft = Transaction::where('id', $validated['draft_id'])
                 ->where('status', 'draft')
                 ->where('user_id', $userId)
+                ->lockForUpdate()
                 ->first();
 
             if ($draft) {
+                if ((int) $draft->cashier_session_id !== $sessionId) {
+                    throw ValidationException::withMessages([
+                        'draft_id' => 'Draft berasal dari sesi kasir lain dan tidak dapat dialihkan.',
+                    ]);
+                }
+
                 $draft->transactionItems()->delete();
 
                 return $draft;
@@ -184,5 +209,22 @@ class DraftService
         ]);
 
         return $missingProductIds;
+    }
+
+    private function assertSessionCanSaveTo(?CashierSession $session, ?int $expectedSessionId = null): void
+    {
+        if ($session === null) {
+            throw ValidationException::withMessages([
+                'cart' => 'Buka kasir terlebih dahulu.',
+            ]);
+        }
+
+        $this->sessionService->assertNotOverdue($session);
+
+        if ($expectedSessionId !== null && $expectedSessionId !== $session->id) {
+            throw ValidationException::withMessages([
+                'session' => 'Sesi kasir sudah berubah. Draft tidak dialihkan ke sesi lain.',
+            ]);
+        }
     }
 }

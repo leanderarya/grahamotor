@@ -18,6 +18,8 @@ class LowStockAlert extends BaseWidget
         return $table
             ->query(
                 Product::query()
+                    ->select(['id', 'name', 'stock', 'sell_price'])
+                    ->when(auth()->user()?->isOwner(), fn ($query) => $query->addSelect('cost_price'))
                     ->where('stock', '<=', 5) // Ambang batas stok tipis
                     ->orderBy('stock', 'asc') // Yang paling sedikit di atas
                     ->limit(5)
@@ -36,7 +38,8 @@ class LowStockAlert extends BaseWidget
 
                 Tables\Columns\TextColumn::make('cost_price')
                     ->label('HPP')
-                    ->money('IDR'),
+                    ->money('IDR')
+                    ->visible(fn (): bool => auth()->user()?->isOwner() ?? false),
                 Tables\Columns\TextColumn::make('sell_price')
                     ->label('Harga Jual')
                     ->money('IDR'),

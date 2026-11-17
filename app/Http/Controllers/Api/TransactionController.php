@@ -29,6 +29,7 @@ class TransactionController extends Controller
             'change_amount' => 'required|numeric',
             'customer_type' => 'required|in:general,workshop',
             'draft_id' => 'nullable|exists:transactions,id',
+            'cashier_session_id' => 'required|integer|min:1',
         ]);
 
         try {

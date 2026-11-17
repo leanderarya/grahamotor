@@ -9,6 +9,7 @@
         "format": "prettier --write resources/",
         "format:check": "prettier --check resources/",
         "lint": "eslint . --fix",
+        "test:offline-queue": "node --test tests/js/offline-queue.test.mjs",
         "types": "tsc --noEmit"
     },
     "devDependencies": {

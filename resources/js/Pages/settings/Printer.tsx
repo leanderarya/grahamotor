@@ -12,7 +12,7 @@ export default function PrinterSettings() {
     const [connectingTo, setConnectingTo] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
-    const handleConnect = async (device: { name: string; address: string }) => {
+    const handleConnect = async (device: Parameters<typeof connect>[0]) => {
         setConnectingTo(device.address);
         setError(null);
         try {
@@ -84,8 +84,12 @@ export default function PrinterSettings() {
                             setError(null);
                             try {
                                 await scan();
-                            } catch (e: any) {
-                                setError(e?.message || 'Gagal scan Bluetooth. Pastikan Bluetooth aktif.');
+                            } catch (error: unknown) {
+                                setError(
+                                    error instanceof Error && error.message
+                                        ? error.message
+                                        : 'Gagal scan Bluetooth. Pastikan Bluetooth aktif.',
+                                );
                             }
                         }}
                         disabled={isScanning}

@@ -31,13 +31,16 @@ class SessionController extends Controller
         ]);
 
         try {
-            $this->sessionService->openSession(
+            $session = $this->sessionService->openSession(
                 auth()->id(),
                 $validated['opening_cash'],
                 $validated['opening_notes'] ?? null,
             );
 
-            return response()->json(['message' => 'Kasir berhasil dibuka.']);
+            return response()->json([
+                'message' => 'Kasir berhasil dibuka.',
+                'session' => $this->sessionService->buildSessionPayload($session),
+            ]);
         } catch (ValidationException $e) {
             throw $e;
         }

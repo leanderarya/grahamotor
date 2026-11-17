@@ -51,10 +51,11 @@ class TransactionIntegrityTest extends TestCase
     public function test_f04_non_cash_payment_persists_client_amount_without_server_check(): void
     {
         $user = $this->kasir();
-        $this->openSession($user);
+        $session = $this->openSession($user);
         $product = $this->product();
 
         $transaction = app(TransactionService::class)->processPayment($user, [
+            'cashier_session_id' => $session->id,
             'cart' => [['id' => $product->id, 'qty' => 1]],
             'payment_method' => 'bank',
             'amount_paid' => 0,
@@ -73,10 +74,11 @@ class TransactionIntegrityTest extends TestCase
     public function test_f04_cash_payment_accepts_underpayment(): void
     {
         $user = $this->kasir();
-        $this->openSession($user);
+        $session = $this->openSession($user);
         $product = $this->product();
 
         $transaction = app(TransactionService::class)->processPayment($user, [
+            'cashier_session_id' => $session->id,
             'cart' => [['id' => $product->id, 'qty' => 1]],
             'payment_method' => 'cash',
             'amount_paid' => 1,
@@ -91,7 +93,7 @@ class TransactionIntegrityTest extends TestCase
     public function test_f04_duplicate_cart_lines_do_not_bypass_stock_check(): void
     {
         $user = $this->kasir();
-        $this->openSession($user);
+        $session = $this->openSession($user);
         $product = $this->product(10);
 
         // Reported as a risk during audit; the lockForUpdate() re-read inside
@@ -99,6 +101,7 @@ class TransactionIntegrityTest extends TestCase
         // so the aggregate over-sell is rejected and the transaction rolls back.
         try {
             app(TransactionService::class)->processPayment($user, [
+                'cashier_session_id' => $session->id,
                 'cart' => [
                     ['id' => $product->id, 'qty' => 6],
                     ['id' => $product->id, 'qty' => 6],
@@ -120,12 +123,13 @@ class TransactionIntegrityTest extends TestCase
     public function test_f04_single_line_over_stock_is_still_rejected(): void
     {
         $user = $this->kasir();
-        $this->openSession($user);
+        $session = $this->openSession($user);
         $product = $this->product(5);
 
         $this->expectException(ValidationException::class);
 
         app(TransactionService::class)->processPayment($user, [
+            'cashier_session_id' => $session->id,
             'cart' => [['id' => $product->id, 'qty' => 6]],
             'payment_method' => 'cash',
             'amount_paid' => 105000,
@@ -166,10 +170,11 @@ class TransactionIntegrityTest extends TestCase
     public function test_f05_second_void_is_rejected(): void
     {
         $user = $this->kasir();
-        $this->openSession($user);
+        $session = $this->openSession($user);
         $product = $this->product();
 
         $transaction = app(TransactionService::class)->processPayment($user, [
+            'cashier_session_id' => $session->id,
             'cart' => [['id' => $product->id, 'qty' => 1]],
             'payment_method' => 'cash',
             'amount_paid' => 105000,
@@ -187,10 +192,11 @@ class TransactionIntegrityTest extends TestCase
     public function test_f05_void_by_another_user_is_rejected(): void
     {
         $user = $this->kasir();
-        $this->openSession($user);
+        $session = $this->openSession($user);
         $product = $this->product();
 
         $transaction = app(TransactionService::class)->processPayment($user, [
+            'cashier_session_id' => $session->id,
             'cart' => [['id' => $product->id, 'qty' => 1]],
             'payment_method' => 'cash',
             'amount_paid' => 105000,

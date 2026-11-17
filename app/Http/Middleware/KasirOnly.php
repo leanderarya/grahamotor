@@ -19,13 +19,14 @@ class KasirOnly
             return redirect()->route('pin.login');
         }
 
-        // Admin tidak boleh akses halaman kasir
-        if ($user->role === 'admin') {
+        if (! $user->isCashier()) {
             if ($request->expectsJson()) {
-                return response()->json(['message' => 'Admin cannot access kasir endpoints.'], 403);
+                return response()->json(['message' => 'Akun ini tidak memiliki akses ke endpoint kasir.'], 403);
             }
 
-            return redirect('/admin');
+            return ($user->isOwner() || $user->isAdmin())
+                ? redirect('/admin')
+                : redirect()->route('pin.login');
         }
 
         return $next($request);

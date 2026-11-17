@@ -12,7 +12,7 @@ class LoginResponse implements LoginResponseContract
         $user = auth()->user();
 
         // Cek Role Database
-        if ($user->role === 'admin') {
+        if ($user->isOwner() || $user->isAdmin()) {
             return Inertia::location(url('/admin'));
         }
 

@@ -21,6 +21,11 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'prevent-open-cashier-logout' => PreventLogoutWithOpenCashierSession::class,
             'kasir-only' => \App\Http\Middleware\KasirOnly::class,
+            'active-user' => \App\Http\Middleware\EnsureActiveUser::class,
+        ]);
+
+        $middleware->web(append: [
+            \App\Http\Middleware\EnsureActiveUser::class,
         ]);
 
         $middleware->web(append: [

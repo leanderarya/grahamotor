@@ -18,6 +18,7 @@ use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
 class ProductResource extends Resource
@@ -31,6 +32,34 @@ class ProductResource extends Resource
     protected static ?string $navigationGroup = 'Inventaris';
 
     protected static ?int $navigationSort = 1;
+
+    public static function canViewAny(): bool
+    {
+        return auth()->user()?->isOwner() || auth()->user()?->isAdmin();
+    }
+
+    public static function getEloquentQuery(): Builder
+    {
+        $query = parent::getEloquentQuery();
+
+        if (! (auth()->user()?->isOwner() ?? false)) {
+            $query->select([
+                'id',
+                'sku',
+                'name',
+                'category',
+                'image_path',
+                'volume_liter',
+                'stock',
+                'sell_price',
+                'workshop_price',
+                'created_at',
+                'updated_at',
+            ]);
+        }
+
+        return $query;
+    }
 
     public static function form(Form $form): Form
     {
@@ -85,9 +114,11 @@ class ProductResource extends Resource
                             // UBAH BARIS INI:
                             // Hanya Read Only kalau lagi mode 'edit'. Kalau 'create', boleh diisi.
                             ->readOnly(fn (string $context): bool => $context === 'edit')
+                            ->visible(fn (): bool => auth()->user()?->isOwner() ?? false)
+                            ->dehydrated(fn (): bool => auth()->user()?->isOwner() ?? false)
 
                             // Wajib diisi saat bikin baru, biar HPP nggak nol
-                            ->required(fn (string $context): bool => $context === 'create')
+                            ->required(fn (string $context): bool => $context === 'create' && (auth()->user()?->isOwner() ?? false))
 
                             ->helperText(fn (string $context) => $context === 'create'
                                 ? 'Masukkan modal awal untuk stok ini.'
@@ -180,6 +211,7 @@ class ProductResource extends Resource
                     ->label('HPP')
                     ->money('IDR')
                     ->sortable()
+                    ->visible(fn (): bool => auth()->user()?->isOwner() ?? false)
                     ->toggleable(),
 
                 // List Mobil yang Cocok (Ditampilkan sebagai Tag)

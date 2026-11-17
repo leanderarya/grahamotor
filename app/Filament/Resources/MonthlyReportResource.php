@@ -28,6 +28,11 @@ class MonthlyReportResource extends Resource
 
     protected static ?int $navigationSort = 2;
 
+    public static function canViewAny(): bool
+    {
+        return auth()->user()?->isOwner() ?? false;
+    }
+
     public static function form(Form $form): Form
     {
         return $form

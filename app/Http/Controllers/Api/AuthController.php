@@ -7,7 +7,6 @@ use App\Models\User;
 use App\Services\PinSecurityService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
@@ -28,11 +27,9 @@ class AuthController extends Controller
             ], 429);
         }
 
-        $user = User::where('role', 'kasir')
-            ->whereNotNull('pin')
-            ->first();
+        $user = User::findCashierForPin($request->pin);
 
-        if (! $user || ! Hash::check($request->pin, $user->pin)) {
+        if (! $user) {
             // Record failed attempt
             $pinSecurity->recordAttempt($request->pin, $ip, false);
 

@@ -15,6 +15,11 @@ class StatsOverview extends BaseWidget
 {
     protected static ?string $pollingInterval = '60s';
 
+    public static function canView(): bool
+    {
+        return auth()->user()?->isOwner() ?? false;
+    }
+
     protected function getStats(): array
     {
         $now = Carbon::now();

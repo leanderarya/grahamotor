@@ -39,6 +39,11 @@ class CashierSession extends Model
         return $this->belongsTo(User::class);
     }
 
+    public function overrideAudits(): HasMany
+    {
+        return $this->hasMany(ShiftOverrideAudit::class);
+    }
+
     public function transactions(): HasMany
     {
         return $this->hasMany(Transaction::class);

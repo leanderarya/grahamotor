@@ -65,15 +65,15 @@ export function SettlementModal({
                 <div className="mt-3 grid grid-cols-2 gap-2">
                     <div className="rounded-lg bg-slate-50 p-2.5">
                         <div className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Saldo Awal</div>
-                        <div className="mt-1 text-sm font-bold text-slate-950">Rp {formatRupiah(sessionState?.opening_cash || 0)}</div>
+                        <div className="mt-1 text-sm font-bold text-slate-950">Rp {formatRupiah(Number(sessionState?.opening_cash || 0))}</div>
                     </div>
                     <div className="rounded-lg bg-slate-50 p-2.5">
                         <div className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Cash Sales</div>
-                        <div className="mt-1 text-sm font-bold text-slate-950">Rp {formatRupiah(sessionState?.cash_sales_total || 0)}</div>
+                        <div className="mt-1 text-sm font-bold text-slate-950">Rp {formatRupiah(Number(sessionState?.cash_sales_total || 0))}</div>
                     </div>
                     <div className="rounded-lg bg-slate-50 p-2.5">
                         <div className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Non Cash</div>
-                        <div className="mt-1 text-sm font-bold text-slate-950">Rp {formatRupiah(sessionState?.non_cash_sales_total || 0)}</div>
+                        <div className="mt-1 text-sm font-bold text-slate-950">Rp {formatRupiah(Number(sessionState?.non_cash_sales_total || 0))}</div>
                     </div>
                     <div className="rounded-lg bg-slate-900 p-2.5 text-white">
                         <div className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Expected Cash</div>

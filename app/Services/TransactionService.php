@@ -26,26 +26,40 @@ class TransactionService
      */
     public function processPayment(Authenticatable $user, array $validated): Transaction
     {
-        $openSession = $this->sessionService->getOpenSession($user->id);
-
-        if ($openSession === null) {
-            throw ValidationException::withMessages([
-                'cart' => 'Buka kasir terlebih dahulu sebelum memproses transaksi.',
-            ]);
-        }
-
         /** @var Transaction $transaction */
-        $transaction = DB::transaction(function () use ($validated, $openSession, $user) {
+        $transaction = DB::transaction(function () use ($validated, $user) {
+            $openSession = $this->sessionService->lockOpenSession($user->id);
+
+            if ($openSession === null) {
+                throw ValidationException::withMessages([
+                    'cart' => 'Buka kasir terlebih dahulu sebelum memproses transaksi.',
+                ]);
+            }
+
+            if (filter_var($validated['cashier_session_id'] ?? null, FILTER_VALIDATE_INT) !== $openSession->id) {
+                throw ValidationException::withMessages([
+                    'session' => 'Sesi transaksi tidak valid atau sudah berubah. Transaksi tidak dialihkan ke sesi lain.',
+                ]);
+            }
+
+            $this->sessionService->assertNotOverdue($openSession);
+
             if (! empty($validated['draft_id'])) {
                 $transaction = Transaction::where('id', $validated['draft_id'])
                     ->where('status', 'draft')
                     ->where('user_id', $user->id)
+                    ->lockForUpdate()
                     ->firstOrFail();
+
+                if ((int) $transaction->cashier_session_id !== $openSession->id) {
+                    throw ValidationException::withMessages([
+                        'draft_id' => 'Draft berasal dari sesi kasir lain dan tidak dapat dialihkan.',
+                    ]);
+                }
 
                 $transaction->transactionItems()->delete();
 
                 $transaction->update([
-                    'cashier_session_id' => $openSession->id,
                     'payment_method' => $validated['payment_method'],
                     'customer_type' => $validated['customer_type'],
                     'amount_paid' => $validated['amount_paid'],
@@ -111,7 +125,7 @@ class TransactionService
             $openSession->increment('non_cash_sales_total', $nonCashSales);
 
             return $transaction;
-        });
+        }, 3);
 
         return $transaction;
     }
@@ -122,25 +136,29 @@ class TransactionService
      */
     public function voidTransaction(Transaction $transaction, int $userId, string $reason): void
     {
-        if ($transaction->status === 'voided') {
-            throw ValidationException::withMessages([
-                'transaction' => 'Transaksi sudah dibatalkan.',
-            ]);
-        }
-
-        if ($transaction->user_id !== $userId) {
-            throw ValidationException::withMessages([
-                'transaction' => 'Anda hanya bisa membatalkan transaksi milik sendiri.',
-            ]);
-        }
-
         DB::transaction(function () use ($transaction, $userId, $reason) {
-            // Eager-load items + products to avoid N+1 on stock restore
+            \App\Models\User::query()->whereKey($userId)->lockForUpdate()->firstOrFail();
+
+            $transaction = Transaction::query()->whereKey($transaction->id)->lockForUpdate()->firstOrFail();
+
+            if ($transaction->status === 'voided') {
+                throw ValidationException::withMessages([
+                    'transaction' => 'Transaksi sudah dibatalkan.',
+                ]);
+            }
+
+            if ($transaction->user_id !== $userId) {
+                throw ValidationException::withMessages([
+                    'transaction' => 'Anda hanya bisa membatalkan transaksi milik sendiri.',
+                ]);
+            }
+
             $transaction->load('transactionItems.product');
 
             // Restore stock
             foreach ($transaction->transactionItems as $item) {
-                $item->product->increment('stock', $item->quantity);
+                Product::query()->whereKey($item->product_id)->lockForUpdate()->firstOrFail()
+                    ->increment('stock', $item->quantity);
             }
 
             // Mark as voided
@@ -153,12 +171,15 @@ class TransactionService
 
             // Recalculate session totals
             if ($transaction->cashier_session_id) {
-                $session = CashierSession::find($transaction->cashier_session_id);
+                $session = CashierSession::query()
+                    ->whereKey($transaction->cashier_session_id)
+                    ->lockForUpdate()
+                    ->first();
                 if ($session && $session->closed_at === null) {
                     $session->recalculateTotals();
                 }
             }
-        });
+        }, 3);
     }
 
     /**

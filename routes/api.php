@@ -12,7 +12,7 @@ Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,
 Route::get('/version', [\App\Http\Controllers\Api\VersionController::class, 'index']);
 
 // Protected routes — kasir only
-Route::middleware(['auth:sanctum', 'kasir-only'])->group(function () {
+Route::middleware(['auth:sanctum', 'active-user', 'kasir-only'])->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
 
     // Products

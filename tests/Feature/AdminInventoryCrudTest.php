@@ -4,8 +4,13 @@ namespace Tests\Feature;
 
 use App\Filament\Resources\ProductResource\Pages\CreateProduct;
 use App\Filament\Resources\ProductResource\Pages\EditProduct;
+use App\Filament\Resources\ProductResource\Pages\ListProducts;
 use App\Filament\Resources\PurchaseResource\Pages\CreatePurchase;
 use App\Filament\Resources\StockAdjustmentResource\Pages\CreateStockAdjustment;
+use App\Filament\Resources\UserResource\Pages\CreateUser;
+use App\Filament\Resources\UserResource\Pages\EditUser;
+use App\Filament\Resources\UserResource\Pages\ListUsers;
+use App\Models\CashierSession;
 use App\Models\Product;
 use App\Models\Purchase;
 use App\Models\StockAdjustment;
@@ -13,6 +18,7 @@ use App\Models\Transaction;
 use App\Models\TransactionItem;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -64,8 +70,9 @@ class AdminInventoryCrudTest extends TestCase
             ->assertHasNoFormErrors();
 
         $this->assertSame(4, Product::where('sku', 'B2-0001')->first()->stock);
-        // Product::created seeds an opening purchase record.
-        $this->assertSame(1, Purchase::count());
+        $product = Product::where('sku', 'B2-0001')->firstOrFail();
+        $this->assertSame('0.00', (string) $product->cost_price);
+        $this->assertSame(0, Purchase::count());
     }
 
     public function test_admin_can_edit_product_stock_and_price(): void
@@ -81,6 +88,92 @@ class AdminInventoryCrudTest extends TestCase
         $product->refresh();
         $this->assertSame(7, $product->stock);
         $this->assertSame('110000.00', (string) $product->sell_price);
+    }
+
+    public function test_admin_product_list_does_not_render_average_cost(): void
+    {
+        $this->actingAs($this->admin());
+        $this->product();
+
+        Livewire::test(ListProducts::class)
+            ->assertDontSee('HPP');
+    }
+
+    public function test_admin_can_create_cashier_but_cannot_choose_a_privileged_role(): void
+    {
+        $this->actingAs($this->admin());
+
+        Livewire::test(CreateUser::class)
+            ->fillForm([
+                'name' => 'Kasir Baru',
+                'role' => 'kasir',
+                'pin' => '4826',
+            ])
+            ->call('create')
+            ->assertHasNoFormErrors();
+
+        $cashier = User::where('name', 'Kasir Baru')->firstOrFail();
+        $this->assertSame('kasir', $cashier->role);
+        $this->assertTrue(Hash::check('4826', $cashier->pin));
+    }
+
+    public function test_admin_can_reset_a_cashier_pin_from_the_edit_form(): void
+    {
+        $admin = $this->admin();
+        $cashier = User::factory()->create(['role' => 'kasir', 'pin' => '4826']);
+        $this->actingAs($admin);
+
+        Livewire::test(EditUser::class, ['record' => $cashier->getRouteKey()])
+            ->fillForm(['role' => 'kasir', 'pin' => '5937'])
+            ->call('save')
+            ->assertHasNoFormErrors();
+
+        $this->assertTrue(Hash::check('5937', $cashier->fresh()->pin));
+        $this->assertDatabaseHas('user_management_audits', [
+            'actor_id' => $admin->id,
+            'target_user_id' => $cashier->id,
+            'action' => 'pin_reset',
+        ]);
+    }
+
+    public function test_admin_can_deactivate_a_cashier_from_the_user_list_action(): void
+    {
+        $admin = $this->admin();
+        $cashier = User::factory()->create(['role' => 'kasir']);
+        $this->actingAs($admin);
+
+        Livewire::test(ListUsers::class)
+            ->assertTableActionVisible('deactivate', $cashier)
+            ->callTableAction('deactivate', $cashier);
+
+        $this->assertFalse($cashier->fresh()->is_active);
+        $this->assertDatabaseHas('user_management_audits', [
+            'actor_id' => $admin->id,
+            'target_user_id' => $cashier->id,
+            'action' => 'deactivated',
+        ]);
+    }
+
+    public function test_owner_cannot_change_a_cashier_role_while_their_shift_is_open(): void
+    {
+        $owner = User::factory()->create(['role' => 'owner']);
+        $cashier = User::factory()->create(['role' => 'kasir']);
+        CashierSession::create([
+            'user_id' => $cashier->id,
+            'opening_cash' => 0,
+            'opened_at' => now(),
+        ]);
+
+        $this->actingAs($owner);
+
+        Livewire::test(\App\Filament\Resources\UserResource\Pages\EditUser::class, [
+            'record' => $cashier->getRouteKey(),
+        ])
+            ->fillForm(['role' => 'admin'])
+            ->call('save')
+            ->assertHasFormErrors(['role']);
+
+        $this->assertSame('kasir', $cashier->fresh()->role);
     }
 
     public function test_bulk_stock_adjustment_sets_absolute_product_stock(): void
