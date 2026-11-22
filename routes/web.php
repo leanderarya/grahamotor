@@ -1,11 +1,10 @@
 <?php
 
+use App\Http\Controllers\PinLoginController;
+use App\Http\Controllers\TransactionController;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
-use Laravel\Fortify\Features;
-use App\Http\Controllers\TransactionController;
-use App\Http\Controllers\PinLoginController;
-use Illuminate\Support\Facades\Auth;
 
 // --- LOGIN KASIR (PIN) ---
 Route::get('/pin-login', [PinLoginController::class, 'show'])->name('pin.login');
@@ -13,7 +12,7 @@ Route::post('/pin-login', [PinLoginController::class, 'store'])->name('pin.login
 
 // --- ROUTE UTAMA (ROOT) ---
 Route::get('/', function () {
-    if (!auth()->check()) {
+    if (! auth()->check()) {
         // Kasir ke PIN login, admin ke login biasa
         return redirect()->route('pin.login');
     }

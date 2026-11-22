@@ -22,6 +22,7 @@ class AuthController extends Controller
         // Check if IP is locked out
         if ($pinSecurity->isLockedOut($ip)) {
             $remaining = $pinSecurity->getRemainingLockoutTime($ip);
+
             return response()->json([
                 'message' => "Terlalu banyak percobaan. Coba lagi dalam {$remaining} detik.",
             ], 429);

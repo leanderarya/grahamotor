@@ -2,10 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\CashierSession;
 use App\Models\Product;
 use App\Models\Transaction;
 use App\Models\TransactionItem;
-use App\Models\CashierSession;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -176,6 +176,7 @@ class DraftService
             $product = $products->get($item['id']);
             if (! $product) {
                 $missingProductIds[] = $item['id'];
+
                 continue;
             }
 

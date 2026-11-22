@@ -27,6 +27,7 @@ class PinLoginController extends Controller
         // Check if IP is locked out
         if ($pinSecurity->isLockedOut($ip)) {
             $remaining = $pinSecurity->getRemainingLockoutTime($ip);
+
             return back()->withErrors([
                 'pin' => "Terlalu banyak percobaan. Coba lagi dalam {$remaining} detik.",
             ]);

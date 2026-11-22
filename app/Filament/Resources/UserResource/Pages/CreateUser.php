@@ -3,11 +3,10 @@
 namespace App\Filament\Resources\UserResource\Pages;
 
 use App\Filament\Resources\UserResource;
-use App\Services\UserManagementService;
-use Illuminate\Database\Eloquent\Model;
 use App\Models\User;
-use Filament\Actions;
+use App\Services\UserManagementService;
 use Filament\Resources\Pages\CreateRecord;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Validation\ValidationException;
 
 class CreateUser extends CreateRecord
