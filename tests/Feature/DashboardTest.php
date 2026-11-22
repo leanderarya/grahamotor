@@ -162,6 +162,7 @@ class DashboardTest extends TestCase
 
         $owner = User::where('email', $email)->firstOrFail();
         $this->assertSame('owner', $owner->role);
+        $this->assertNull($owner->pin);
         $this->assertSame('Existing Administrator', $existingAdmin->fresh()->name);
         $this->assertSame($existingAdminPassword, $existingAdmin->fresh()->password);
         $this->assertDatabaseHas('user_management_audits', [

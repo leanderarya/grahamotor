@@ -132,6 +132,28 @@ test -f "$outside_assets/keep.txt"
 test -f "$project_root/public/neighbor/keep.txt"
 pass 'asset cleanup preserves symlink targets and sibling paths'
 
+restore_app="$temporary_root/restore-app"
+mkdir -p "$restore_app/.git" "$restore_app/public/build/nested"
+git -C "$restore_app" init -q
+printf 'tracked release asset\n' > "$restore_app/public/build/nested/app.js"
+printf 'manifest\n' > "$restore_app/public/build/manifest.json"
+git -C "$restore_app" add public/build
+git -C "$restore_app" -c user.name=test -c user.email=test@example.invalid commit -qm assets
+restore_sha="$(git -C "$restore_app" rev-parse HEAD)"
+rm "$restore_app/public/build/nested/app.js"
+printf 'untracked\n' > "$restore_app/public/build/extra.js"
+(
+    umask 077
+    deployment_restore_public_build "$restore_app" "$restore_sha"
+)
+test -f "$restore_app/public/build/nested/app.js"
+test ! -e "$restore_app/public/build/extra.js"
+test "$(stat -f '%Lp' "$restore_app/public/build")" = 755
+test "$(stat -f '%Lp' "$restore_app/public/build/nested")" = 755
+test "$(stat -f '%Lp' "$restore_app/public/build/nested/app.js")" = 644
+test "$(stat -f '%Lp' "$restore_app/public/build/manifest.json")" = 644
+pass 'tracked assets restored, scoped untracked assets removed, web modes enforced under umask 077'
+
 home="$temporary_root/home"
 backup_root="$home/grahamotor-backups"
 mkdir -m 700 -p "$backup_root"
