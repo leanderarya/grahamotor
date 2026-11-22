@@ -25,6 +25,43 @@ expect_rejected() {
     pass "$label"
 }
 
+cat > "$temporary_root/php-version-stub" <<'SH'
+#!/bin/sh
+case "${2-}" in
+    *'PHP_VERSION_ID >= 80200'*'pdo_mysql'*'zlib'*) ;;
+    *) exit 2 ;;
+esac
+[ "${MOCK_PDO_MYSQL-}" = yes ] && [ "${MOCK_ZLIB-}" = yes ] || exit 1
+[ "${MOCK_PHP_VERSION_ID-0}" -ge 80200 ]
+SH
+chmod 700 "$temporary_root/php-version-stub"
+php() { "$temporary_root/php-version-stub" "$@"; }
+MOCK_PHP_VERSION_ID=80200
+MOCK_PDO_MYSQL=yes
+MOCK_ZLIB=yes
+export MOCK_PHP_VERSION_ID MOCK_PDO_MYSQL MOCK_ZLIB
+deployment_check_production_php
+pass 'production PHP floor accepts documented PHP 8.2'
+MOCK_PHP_VERSION_ID=80199
+export MOCK_PHP_VERSION_ID
+expect_rejected 'production PHP floor rejects unsupported PHP 8.1' deployment_check_production_php
+unset -f php
+unset MOCK_PHP_VERSION_ID MOCK_PDO_MYSQL MOCK_ZLIB
+
+dirty_test_repo="$temporary_root/dirty-test-repo"
+mkdir -p "$dirty_test_repo/public/build"
+git -C "$dirty_test_repo" init -q
+git -C "$dirty_test_repo" -c user.name=test -c user.email=test@example.invalid \
+    commit --allow-empty -qm baseline
+printf 'old asset\n' > "$dirty_test_repo/public/build/stale.js"
+deployment_check_checkout_clean production "$dirty_test_repo"
+pass 'production checkout accepts drift limited to public/build'
+expect_rejected 'staging checkout remains strict for public/build drift' \
+    deployment_check_checkout_clean staging "$dirty_test_repo"
+printf 'application change\n' > "$dirty_test_repo/application-change"
+expect_rejected 'production checkout rejects dirt outside public/build' \
+    deployment_check_checkout_clean production "$dirty_test_repo"
+
 approved_parent="$temporary_root/approved"
 sibling="$temporary_root/sibling"
 mkdir "$approved_parent" "$sibling"

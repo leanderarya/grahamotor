@@ -57,6 +57,9 @@ assert deploy_script.index('cmp -s "$tree/scripts/production-migrations.php"') <
 assert "optimize:clear" not in deploy_script and "artisan\" about" not in deploy_script
 assert 'flock -n 9' in deploy_script
 assert deploy_script.index('artisan" down', second_preflight) < code_checkout
+asset_cleanup = deploy_script.index('deployment_clear_public_build "$DEPLOYMENT_APP_ROOT"', second_preflight)
+assert backup_verification < deploy_script.index('artisan" down', second_preflight) < asset_cleanup < code_checkout
+assert deploy_script.index('deployment_clear_public_build "$DEPLOYMENT_APP_ROOT"', code_checkout) > code_checkout
 assert deploy_script.index('artisan" up', migration) < deploy_script.index('if ! deployment_verify_production_health;', migration)
 assert deploy_script.index('if ! deployment_verify_production_health;', migration) < deploy_script.index('rm "$marker"', migration)
 assert "trap deployment_cleanup 0" in deploy_script

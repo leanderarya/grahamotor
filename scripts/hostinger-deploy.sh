@@ -51,6 +51,23 @@ deployment_verify_release_payload() {
     }
 }
 
+deployment_check_production_php() {
+    php -r 'exit(PHP_VERSION_ID >= 80200 && extension_loaded("pdo_mysql") && extension_loaded("zlib") ? 0 : 1);'
+}
+
+deployment_check_checkout_clean() {
+    [ "$#" -eq 2 ] || return 1
+    if [ "$1" = production ]; then
+        dirty_paths=$(git -C "$2" status --porcelain --untracked-files=all -- . ':(exclude)public/build')
+    else
+        dirty_paths=$(git -C "$2" status --porcelain --untracked-files=all)
+    fi
+    [ -z "$dirty_paths" ] || {
+        deployment_refuse 'application checkout is dirty (only production public/build drift is tolerated)'
+        return 1
+    }
+}
+
 deployment_verify_production_health() {
     status=$(curl -q --fail --silent --show-error --max-time 15 --retry 3 --retry-max-time 60 \
         --header 'Cache-Control: no-cache, no-store' --output /dev/null --write-out '%{http_code}' \
@@ -334,8 +351,7 @@ deployment_release() {
         deployment_refuse 'application Git remote is not the approved repository'
         return 1
     }
-    [ -z "$(git -C "$DEPLOYMENT_APP_ROOT" status --porcelain --untracked-files=all)" ] || {
-        deployment_refuse 'application checkout is dirty'
+    deployment_check_checkout_clean "$DEPLOY_ENV" "$DEPLOYMENT_APP_ROOT" || {
         return 1
     }
 
@@ -343,7 +359,10 @@ deployment_release() {
         for tool in php composer git mysqldump tar curl flock cmp diff; do
             command -v "$tool" >/dev/null || { deployment_refuse 'required production tooling is unavailable'; return 1; }
         done
-        php -r 'exit(PHP_VERSION_ID >= 80300 && extension_loaded("pdo_mysql") && extension_loaded("zlib") ? 0 : 1);'
+        deployment_check_production_php || {
+            deployment_refuse 'production requires PHP 8.2+, pdo_mysql, and zlib'
+            return 1
+        }
         [ "$HOME" = "$DEPLOYMENT_PARENT" ] && [ "${PRODUCTION_HEALTHCHECK_URL-}" = 'https://grahamotor.cahayaarkana.site/up' ] || {
             deployment_refuse 'production home or health endpoint does not match the approved target'
             return 1
@@ -429,6 +448,7 @@ deployment_release() {
         }
         (set -C; printf '%s %s\n' "$DEPLOY_SHA" "$DEPLOY_DIGEST" > "$marker")
         deployment_private_command 'Enter production maintenance mode' php "$DEPLOYMENT_APP_ROOT/artisan" down
+        deployment_clear_public_build "$DEPLOYMENT_APP_ROOT"
     fi
     git -c core.hooksPath=/dev/null -C "$DEPLOYMENT_APP_ROOT" checkout --detach "$DEPLOY_SHA"
 
