@@ -21,6 +21,8 @@ $backupFile = null;
 $evidenceFile = null;
 $ownsBackup = false;
 $ownsEvidence = false;
+$failureCategory = 'reservation/evidence failure';
+$dumpExitCode = 'not-run';
 
 try {
     if (! in_array($environment, ['staging', 'production'], true)
@@ -77,9 +79,17 @@ try {
         || ! empty($database['read']) || ! empty($database['write']) || ! empty($database['unix_socket']))) {
         throw new RuntimeException('Staging backup target does not match the authorized connection.');
     }
-    if ($host === '' || ! preg_match('/^[0-9]+$/D', $port)
+    if (! preg_match('/^[0-9]+$/D', $port)
         || $databaseName === '' || $username === '') {
         throw new RuntimeException('Database connection configuration is incomplete.');
+    }
+
+    $dumpHost = $host;
+    $isLoopback = $host === '' || strcasecmp($host, 'localhost') === 0
+        || filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) && str_starts_with($host, '127.')
+        || filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) && in_array(strtolower($host), ['::1', '0:0:0:0:0:0:0:1'], true);
+    if ($isLoopback) {
+        $dumpHost = '127.0.0.1';
     }
 
     $backupName = "{$environment}-{$runId}-{$runAttempt}-{$releaseSha}.sql.gz";
@@ -106,7 +116,7 @@ try {
         '--routines',
         '--triggers',
         '--hex-blob',
-        "--host={$host}",
+        "--host={$dumpHost}",
         "--port={$port}",
         "--user={$username}",
         '--databases',
@@ -134,6 +144,7 @@ try {
         }
     }
     if (! is_resource($process)) {
+        $failureCategory = 'mysqldump non-zero exit';
         throw new RuntimeException('Could not start the database backup process.');
     }
 
@@ -142,6 +153,7 @@ try {
         proc_terminate($process);
         fclose($pipes[1]);
         proc_close($process);
+        $failureCategory = 'gzwrite/close failure';
         throw new RuntimeException('Could not create the compressed backup file.');
     }
 
@@ -167,8 +179,17 @@ try {
     $gzipClosed = gzclose($gzip);
     $exitCode = proc_close($process);
 
-    if (! $writeSucceeded || ! $gzipClosed || $exitCode !== 0
-        || (! str_contains($header, '-- MySQL dump') && ! str_contains($header, '-- MariaDB dump'))) {
+    $dumpExitCode = (string) $exitCode;
+    if ($exitCode !== 0) {
+        $failureCategory = 'mysqldump non-zero exit';
+        throw new RuntimeException('Database backup process failed.');
+    }
+    if (! $writeSucceeded || ! $gzipClosed) {
+        $failureCategory = 'gzwrite/close failure';
+        throw new RuntimeException('Compressed backup write failed.');
+    }
+    if (! str_contains($header, '-- MySQL dump') && ! str_contains($header, '-- MariaDB dump')) {
+        $failureCategory = 'invalid dump header';
         throw new RuntimeException('Database backup process or output validation failed.');
     }
 
@@ -210,5 +231,6 @@ try {
         unlink($evidenceFile);
     }
     fwrite(STDERR, "Database backup failed; migration must not run.\n");
+    fwrite(STDERR, "Database backup failure category: {$failureCategory}; mysqldump exit code: {$dumpExitCode}\n");
     exit(1);
 }

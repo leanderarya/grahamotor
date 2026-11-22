@@ -157,7 +157,7 @@ function config(string $key): mixed
         'database.default' => 'mysql',
         'database.connections.mysql' => [
             'driver' => 'mysql',
-            'host' => '127.0.0.1',
+            'host' => getenv('BACKUP_TEST_HOST') ?: 'localhost',
             'port' => '3306',
             'database' => 'u163968914_gm_staging',
             'username' => 'u163968914_gm_staging',
@@ -179,16 +179,29 @@ PHP
 cat > "$fake_bin/mysqldump" <<'SH'
 #!/bin/sh
 [ "${MYSQL_PWD-}" = 'backup-test-secret' ] || exit 7
+for argument in "$@"; do
+    case "$argument" in
+        --host=*) printf '%s\n' "$argument" > "$BACKUP_HOST_RECORD" ;;
+    esac
+done
 printf '%s\n' '-- MySQL dump 8.0' 'CREATE TABLE `example` (`id` INT);'
 SH
 chmod 700 "$fake_bin/mysqldump"
 backup_create_sha='abcdef0123456789abcdef0123456789abcdef01'
-backup_output="$(PATH="$fake_bin:$PATH" php "$repo_root/scripts/create-database-backup.php" \
+backup_host_record="$temporary_root/backup-host"
+backup_output="$(PATH="$fake_bin:$PATH" BACKUP_HOST_RECORD="$backup_host_record" php "$repo_root/scripts/create-database-backup.php" \
     "$backup_test_app" staging 67890 1 "$backup_create_sha")"
 case "$backup_output" in
     *backup-test-secret*) printf 'FAIL: backup helper printed database credentials\n' >&2; exit 1 ;;
 esac
 deployment_verify_database_backup staging 67890 1 "$backup_create_sha"
+test "$(cat "$backup_host_record")" = '--host=127.0.0.1'
+pass 'localhost backup host is normalized to IPv4 loopback'
+real_host_sha='abcdef0123456789abcdef0123456789abcdef02'
+PATH="$fake_bin:$PATH" BACKUP_HOST_RECORD="$backup_host_record" BACKUP_TEST_HOST=db.example.test \
+    php "$repo_root/scripts/create-database-backup.php" "$backup_test_app" staging 67890 3 "$real_host_sha" >/dev/null
+test "$(cat "$backup_host_record")" = '--host=db.example.test'
+pass 'real backup host is passed through unchanged'
 pass 'backup helper creates verifiable evidence without logging credentials'
 expect_rejected 'existing release backup cannot be overwritten' \
     env PATH="$fake_bin:$PATH" php "$repo_root/scripts/create-database-backup.php" \
@@ -295,9 +308,17 @@ printf '%s\n' '-- MySQL dump 8.0' 'partial output'
 exit 1
 SH
 chmod 700 "$failed_backup_bin/mysqldump"
-expect_rejected 'failed mysqldump exits before evidence can pass' \
-    env PATH="$failed_backup_bin:$PATH" php "$repo_root/scripts/create-database-backup.php" \
-    "$backup_test_app" staging 67890 2 "$backup_create_sha"
+if env PATH="$failed_backup_bin:$PATH" php "$repo_root/scripts/create-database-backup.php" \
+    "$backup_test_app" staging 67890 2 "$backup_create_sha" 2>"$temporary_root/backup-failure-stderr"; then
+    printf 'FAIL: failed mysqldump unexpectedly succeeded\n' >&2
+    exit 1
+fi
+grep -q 'failure category: mysqldump non-zero exit; mysqldump exit code: 1' "$temporary_root/backup-failure-stderr"
+if grep -q 'backup-test-secret' "$temporary_root/backup-failure-stderr"; then
+    printf 'FAIL: backup failure diagnostic leaked credentials\n' >&2
+    exit 1
+fi
+pass 'mysqldump failure category is emitted without credential leakage'
 test ! -e "$backup_root/staging-67890-2-$backup_create_sha.sql.gz"
 pass 'failed database export leaves no accepted backup evidence'
 
