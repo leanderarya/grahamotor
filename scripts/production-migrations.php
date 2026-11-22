@@ -36,7 +36,13 @@ function authorizedProductionMigrations(array $manifest, array $inventory, array
     ksort($inventory, SORT_STRING);
     $pending = array_values(array_diff(array_keys($inventory), $history));
     if ($pending !== array_keys($approved)) {
-        throw new RuntimeException('Pending migrations do not exactly match the reviewed order.');
+        $alreadyApplied = array_values(array_diff(array_keys($approved), $pending));
+        $unreviewedPending = array_values(array_diff($pending, array_keys($approved)));
+        throw new RuntimeException(sprintf(
+            'Pending migrations do not exactly match the reviewed order. Already applied manifest entries: [%s]. Pending migrations missing from manifest: [%s].',
+            implode(', ', $alreadyApplied),
+            implode(', ', $unreviewedPending),
+        ));
     }
 
     return $pending;
