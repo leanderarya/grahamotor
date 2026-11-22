@@ -88,22 +88,6 @@ try {
     $isLoopback = $host === '' || strcasecmp($host, 'localhost') === 0
         || filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) && str_starts_with($host, '127.')
         || filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6) && in_array(strtolower($host), ['::1', '0:0:0:0:0:0:0:1'], true);
-    if (! $isLoopback && $host !== '' && ! str_ends_with(strtolower($host), '.test')) {
-        $addresses = @gethostbynamel($host) ?: [];
-        $records = @dns_get_record($host, DNS_AAAA) ?: [];
-        foreach ($addresses as $address) {
-            if (str_starts_with($address, '127.')) {
-                $isLoopback = true;
-                break;
-            }
-        }
-        foreach ($records as $record) {
-            if (in_array(strtolower($record['ipv6'] ?? ''), ['::1', '0:0:0:0:0:0:0:1'], true)) {
-                $isLoopback = true;
-                break;
-            }
-        }
-    }
     if ($isLoopback) {
         $dumpHost = '127.0.0.1';
     }
