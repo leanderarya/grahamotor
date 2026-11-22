@@ -25,6 +25,13 @@ expect_rejected() {
     pass "$label"
 }
 
+file_mode() {
+    local mode
+    mode="$(stat -c '%a' "$1" 2>/dev/null)" || mode="$(stat -f '%Lp' "$1")" || return 1
+    [ -n "$mode" ] || return 1
+    printf '%s\n' "$mode"
+}
+
 cat > "$temporary_root/php-version-stub" <<'SH'
 #!/bin/sh
 case "${2-}" in
@@ -148,10 +155,10 @@ printf 'untracked\n' > "$restore_app/public/build/extra.js"
 )
 test -f "$restore_app/public/build/nested/app.js"
 test ! -e "$restore_app/public/build/extra.js"
-test "$(stat -f '%Lp' "$restore_app/public/build")" = 755
-test "$(stat -f '%Lp' "$restore_app/public/build/nested")" = 755
-test "$(stat -f '%Lp' "$restore_app/public/build/nested/app.js")" = 644
-test "$(stat -f '%Lp' "$restore_app/public/build/manifest.json")" = 644
+test "$(file_mode "$restore_app/public/build")" = 755
+test "$(file_mode "$restore_app/public/build/nested")" = 755
+test "$(file_mode "$restore_app/public/build/nested/app.js")" = 644
+test "$(file_mode "$restore_app/public/build/manifest.json")" = 644
 pass 'tracked assets restored, scoped untracked assets removed, web modes enforced under umask 077'
 
 home="$temporary_root/home"
