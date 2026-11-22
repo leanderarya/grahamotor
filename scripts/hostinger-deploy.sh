@@ -231,6 +231,20 @@ deployment_clear_public_build() {
     }
 }
 
+deployment_restore_public_build() {
+    [ "$#" -eq 2 ] || return 1
+    deployment_validate_app_root "$1" || return 1
+    DEPLOYMENT_BUILD_DIR="$1/public/build"
+    [ ! -L "$DEPLOYMENT_BUILD_DIR" ] || {
+        deployment_refuse 'public/build must not be a symlink'
+        return 1
+    }
+    git -C "$1" restore --source="$2" --worktree -- public/build || return 1
+    git -C "$1" clean -fd -- public/build || return 1
+    find "$DEPLOYMENT_BUILD_DIR" -type d -exec chmod 755 {} + || return 1
+    find "$DEPLOYMENT_BUILD_DIR" -type f -exec chmod 644 {} + || return 1
+}
+
 deployment_verify_database_backup() {
     [ "$#" -eq 4 ] || return 1
     DEPLOYMENT_BACKUP_ENV=$1
@@ -448,8 +462,8 @@ deployment_release() {
         }
         (set -C; printf '%s %s\n' "$DEPLOY_SHA" "$DEPLOY_DIGEST" > "$marker")
         deployment_private_command 'Enter production maintenance mode' php "$DEPLOYMENT_APP_ROOT/artisan" down
-        deployment_clear_public_build "$DEPLOYMENT_APP_ROOT"
     fi
+    [ "$DEPLOY_ENV" != production ] || umask 022
     git -c core.hooksPath=/dev/null -C "$DEPLOYMENT_APP_ROOT" checkout --detach "$DEPLOY_SHA"
 
     deployment_private_command 'Composer install' composer -d "$DEPLOYMENT_APP_ROOT" install \
@@ -462,6 +476,8 @@ deployment_release() {
     if [ "$DEPLOY_ENV" = staging ]; then
         deployment_clear_public_build "$DEPLOYMENT_APP_ROOT"
         cp -a "$DEPLOYMENT_STAGE_TARGET/public-build/." "$DEPLOYMENT_APP_ROOT/public/build/"
+    else
+        deployment_restore_public_build "$DEPLOYMENT_APP_ROOT" "$DEPLOY_SHA"
     fi
     if ! git -C "$DEPLOYMENT_APP_ROOT" diff --quiet "$DEPLOY_SHA" -- public/build \
         || [ -n "$(git -C "$DEPLOYMENT_APP_ROOT" status --porcelain --untracked-files=all -- public/build)" ]; then
@@ -470,6 +486,9 @@ deployment_release() {
             git -C "$DEPLOYMENT_APP_ROOT" restore --source="$DEPLOY_SHA" --worktree -- public/build
         fi
         deployment_refuse 'CI-generated public/build does not match the tracked release assets'
+        if [ "$DEPLOY_ENV" = production ]; then
+            deployment_private_command 'Re-enter production maintenance mode' php "$DEPLOYMENT_APP_ROOT/artisan" down
+        fi
         return 1
     fi
 

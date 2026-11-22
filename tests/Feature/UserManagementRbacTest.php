@@ -8,6 +8,7 @@ use App\Models\UserManagementAudit;
 use App\Services\UserManagementService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Tests\TestCase;
@@ -22,6 +23,30 @@ class UserManagementRbacTest extends TestCase
             'role' => 'kasir',
             'pin' => $pin,
         ]);
+    }
+
+    public function test_owner_can_create_an_admin_without_a_pin(): void
+    {
+        $owner = User::factory()->create(['role' => 'owner']);
+
+        $admin = app(UserManagementService::class)->create($owner, [
+            'name' => 'Admin Tanpa PIN',
+            'email' => 'admin-no-pin@example.test',
+            'password' => 'long-enough-password',
+            'role' => 'admin',
+        ]);
+
+        $this->assertSame('admin', $admin->role);
+        $this->assertNull($admin->pin);
+    }
+
+    public function test_user_pin_column_is_nullable_after_migrations(): void
+    {
+        $pinColumn = collect(Schema::getColumns('users'))->firstWhere('name', 'pin');
+
+        $this->assertNotNull($pinColumn);
+        $this->assertTrue($pinColumn['nullable']);
+        $this->assertNull($pinColumn['default']);
     }
 
     public function test_admin_can_create_and_reset_only_cashier_accounts_with_audit(): void

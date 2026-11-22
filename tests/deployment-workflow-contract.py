@@ -57,9 +57,20 @@ assert deploy_script.index('cmp -s "$tree/scripts/production-migrations.php"') <
 assert "optimize:clear" not in deploy_script and "artisan\" about" not in deploy_script
 assert 'flock -n 9' in deploy_script
 assert deploy_script.index('artisan" down', second_preflight) < code_checkout
-asset_cleanup = deploy_script.index('deployment_clear_public_build "$DEPLOYMENT_APP_ROOT"', second_preflight)
-assert backup_verification < deploy_script.index('artisan" down', second_preflight) < asset_cleanup < code_checkout
-assert deploy_script.index('deployment_clear_public_build "$DEPLOYMENT_APP_ROOT"', code_checkout) > code_checkout
+maintenance_down = deploy_script.index('artisan" down', second_preflight)
+asset_restore = deploy_script.index('deployment_restore_public_build "$DEPLOYMENT_APP_ROOT"', code_checkout)
+assert backup_verification < maintenance_down < code_checkout < asset_restore
+assert 'git -C "$1" restore --source="$2" --worktree -- public/build' in deploy_script
+assert 'git -C "$1" clean -fd -- public/build' in deploy_script
+assert 'find "$DEPLOYMENT_BUILD_DIR" -type d -exec chmod 755 {} +' in deploy_script
+assert 'find "$DEPLOYMENT_BUILD_DIR" -type f -exec chmod 644 {} +' in deploy_script
+assert deploy_script.index('umask 077') < deploy_script.index('umask 022')
+assert deploy_script.index('diff -r "$tree/public/build"') < backup_creation
+failure_block = deploy_script.split("deployment_refuse 'CI-generated public/build does not match the tracked release assets'", 1)[1].split("return 1", 1)[0]
+assert 'if [ "$DEPLOY_ENV" = production ]; then' in failure_block
+assert "deployment_private_command 'Re-enter production maintenance mode' php \"$DEPLOYMENT_APP_ROOT/artisan\" down" in failure_block
+print("PASS: release assets are verified before mutation and restored from the release SHA")
+print("PASS: production asset verification failure re-enters maintenance mode")
 assert deploy_script.index('artisan" up', migration) < deploy_script.index('if ! deployment_verify_production_health;', migration)
 assert deploy_script.index('if ! deployment_verify_production_health;', migration) < deploy_script.index('rm "$marker"', migration)
 assert "trap deployment_cleanup 0" in deploy_script
