@@ -16,6 +16,21 @@ function rejects(string $case, callable $check): void
     throw new LogicException("Unsafe case accepted: {$case}");
 }
 
+function rejectsNaming(string $case, string $filename, callable $check): void
+{
+    try {
+        $check();
+    } catch (RuntimeException $error) {
+        if (! str_contains($error->getMessage(), $filename)) {
+            throw new LogicException("Rejection did not name {$filename}: ".$error->getMessage());
+        }
+        echo "PASS: {$case}\n";
+
+        return;
+    }
+    throw new LogicException("Unsafe case accepted: {$case}");
+}
+
 $root = dirname(__DIR__);
 $manifest = json_decode(file_get_contents($root.'/docs/deployment/production-migrations.json'), true, flags: JSON_THROW_ON_ERROR);
 $inventory = productionMigrationInventory($root.'/database/migrations');
@@ -25,7 +40,7 @@ $history = array_values($history);
 if (authorizedProductionMigrations($manifest, $inventory, $history) !== $files) {
     throw new LogicException('Committed manifest did not match the migration inventory.');
 }
-echo "PASS: reviewed manifest checksums match the committed inventory\n";
+echo "PASS: committed manifest authorizes exactly its pending migration list\n";
 
 $a = '2026_11_17_000001_first.php';
 $b = '2026_11_17_000002_second.php';
@@ -38,6 +53,10 @@ if (authorizedProductionMigrations([$first, $second], $inventory, []) !== [$a, $
     throw new LogicException('Matching release or explicit zero-migration release incorrectly rejected.');
 }
 echo "PASS: matching ordered migrations and explicit zero-migration release\n";
+rejectsNaming('already-applied manifest migration named in rejection', $a,
+    fn () => authorizedProductionMigrations([$first], $inventory, [basename($a, '.php')]));
+rejectsNaming('omitted pending migration named in rejection', $b,
+    fn () => authorizedProductionMigrations([], $inventory, []));
 
 $socketConfig = ['host' => 'localhost', 'port' => '3306', 'database' => 'u163968914_gm_prod', 'username' => 'user', 'password' => 'fake'];
 $socketIdentity = (object) ['db' => $socketConfig['database'], 'account' => 'user@localhost', 'host' => 'db-host', 'port' => 3306, 'server_id' => 42];
