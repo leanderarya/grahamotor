@@ -67,6 +67,9 @@ function productionMigrationInventory(string $directory): array
 function productionMigrationApplication(string $appRoot, string $mode): Illuminate\Foundation\Application
 {
     require_once $appRoot.'/vendor/autoload.php';
+    if ($mode === 'check') {
+        putenv('APP_CONFIG_CACHE=/dev/null/nonexistent');
+    }
     $app = require $appRoot.'/bootstrap/app.php';
     if ($mode === 'check') {
         // A normal Laravel boot may rebuild cached provider manifests in the live tree.
@@ -81,7 +84,35 @@ function productionMigrationApplication(string $appRoot, string $mode): Illumina
     return $app;
 }
 
-function releaseDatabaseTarget(Illuminate\Foundation\Application $app, string $environment): array
+function productionTcpIdentityMatches(array $config, object $identity, ?callable $probe = null): bool
+{
+    $tcpConfig = $config;
+    $tcpConfig['host'] = '127.0.0.1';
+    $tcpConfig['unix_socket'] = null;
+    $tcpIdentity = $probe === null
+        ? (static function () use ($tcpConfig): object {
+            $pdo = new PDO(
+                "mysql:host={$tcpConfig['host']};port={$tcpConfig['port']};dbname={$tcpConfig['database']};charset=utf8mb4",
+                (string) $tcpConfig['username'],
+                (string) $tcpConfig['password'],
+                [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION],
+            );
+
+            return $pdo->query('SELECT DATABASE() AS db, CURRENT_USER() AS account, @@hostname AS host, @@port AS port, @@server_id AS server_id')->fetch(PDO::FETCH_OBJ);
+        })()
+        : $probe($tcpConfig);
+
+    $accountDatabase = static fn (object $result): string => explode('@', (string) ($result->account ?? ''), 2)[0];
+
+    return ($tcpIdentity->db ?? null) === ($identity->db ?? null)
+        && ($tcpIdentity->host ?? null) === ($identity->host ?? null)
+        && (string) ($tcpIdentity->port ?? '') === (string) ($identity->port ?? '')
+        && (string) ($tcpIdentity->server_id ?? '') === (string) ($identity->server_id ?? '')
+        && $accountDatabase($tcpIdentity) !== ''
+        && $accountDatabase($tcpIdentity) === $accountDatabase($identity);
+}
+
+function releaseDatabaseTarget(Illuminate\Foundation\Application $app, string $environment, ?callable $tcpIdentityProbe = null): array
 {
     $migrator = $app->make('migrator');
     $connection = $migrator->resolveConnection(null);
@@ -92,7 +123,8 @@ function releaseDatabaseTarget(Illuminate\Foundation\Application $app, string $e
         || $connection->getDriverName() !== 'mysql'
         || $connection->getDatabaseName() !== $expectedDatabase
         || ($environment === 'staging' && ($config['username'] ?? null) !== 'u163968914_gm_staging')
-        || ! is_string($config['host'] ?? null) || in_array($config['host'], ['', 'localhost'], true)
+        || ! is_string($config['host'] ?? null)
+        || ($environment !== 'production' && in_array($config['host'], ['', 'localhost'], true))
         || ! empty($config['url']) || ! empty($config['read']) || ! empty($config['write'])
         || ! empty($config['unix_socket']) || ! empty($config['options'])) {
         throw new RuntimeException('Connection does not match the authorized database.');
@@ -105,6 +137,10 @@ function releaseDatabaseTarget(Illuminate\Foundation\Application $app, string $e
     if (($identity->db ?? null) !== $expectedDatabase
         || ($environment === 'staging' && ($identity->account ?? null) !== 'u163968914_gm_staging@127.0.0.1')) {
         throw new RuntimeException('Connected schema does not match the authorized database.');
+    }
+    if ($environment === 'production' && in_array($config['host'], ['', 'localhost'], true)
+        && ! productionTcpIdentityMatches($config, $identity, $tcpIdentityProbe)) {
+        throw new RuntimeException('TCP database identity does not match the application connection.');
     }
 
     return [$migrator, $connection, hash('sha256', json_encode(

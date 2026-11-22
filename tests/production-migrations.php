@@ -39,6 +39,33 @@ if (authorizedProductionMigrations([$first, $second], $inventory, []) !== [$a, $
 }
 echo "PASS: matching ordered migrations and explicit zero-migration release\n";
 
+$socketConfig = ['host' => 'localhost', 'port' => '3306', 'database' => 'u163968914_gm_prod', 'username' => 'user', 'password' => 'fake'];
+$socketIdentity = (object) ['db' => $socketConfig['database'], 'account' => 'user@localhost', 'host' => 'db-host', 'port' => 3306, 'server_id' => 42];
+$tcpProbe = static fn (array $config): object => (object) [
+    'db' => $config['database'], 'account' => 'user@127.0.0.1', 'host' => 'db-host', 'port' => 3306, 'server_id' => 42,
+];
+if (! productionTcpIdentityMatches($socketConfig, $socketIdentity, $tcpProbe)) {
+    throw new LogicException('Matching socket and TCP identities were rejected.');
+}
+echo "PASS: socket-style host accepted when TCP identity matches\n";
+if (productionTcpIdentityMatches($socketConfig, $socketIdentity, static fn (): object => (object) [
+    'db' => $socketConfig['database'], 'account' => 'other@127.0.0.1', 'host' => 'other-host', 'port' => 3306, 'server_id' => 43,
+])) {
+    throw new LogicException('Differing TCP identity was accepted.');
+}
+echo "PASS: socket-style host refused when TCP identity differs\n";
+try {
+    productionTcpIdentityMatches($socketConfig, $socketIdentity, static function (): never {
+        throw new RuntimeException('fake TCP probe failure');
+    });
+    throw new LogicException('Failed TCP probe was accepted.');
+} catch (RuntimeException $error) {
+    if ($error->getMessage() === 'Failed TCP probe was accepted.') {
+        throw $error;
+    }
+}
+echo "PASS: socket-style host refused when TCP probe fails\n";
+
 rejects('extra pending', fn () => authorizedProductionMigrations([$first], $inventory, []));
 rejects('missing authorized file', fn () => authorizedProductionMigrations([$first, $second], [$a => $hash], []));
 rejects('reordered manifest', fn () => authorizedProductionMigrations([$second, $first], $inventory, []));
@@ -58,7 +85,10 @@ if (is_file($root.'/vendor/autoload.php')) {
     if ($migrator->resolveConnection(null)->getDatabaseName() !== ':memory:' || $migrator->paths() !== []) {
         throw new LogicException('Read-only bootstrap did not resolve the isolated test connection.');
     }
-    echo "PASS: read-only Laravel bootstrap resolves the migration repository\n";
+    if (getenv('APP_CONFIG_CACHE') !== '/dev/null/nonexistent') {
+        throw new LogicException('Preflight did not bypass the stale config cache.');
+    }
+    echo "PASS: stale config cache does not override .env during preflight\n";
 
     $directory = realpath(sys_get_temp_dir()).'/gm-migrations-'.bin2hex(random_bytes(8));
     if (! mkdir($directory, 0700)) {
