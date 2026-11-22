@@ -2,6 +2,15 @@ name: Deploy Graha Motor
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Deployment target
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+        required: true
 
 permissions:
   contents: read
@@ -12,7 +21,7 @@ concurrency:
 
 jobs:
   test-and-build:
-    if: github.ref == 'refs/heads/main'
+    name: Release CI
     runs-on: ubuntu-latest
     outputs:
       release-digest: ${{ steps.package-release.outputs.digest }}
@@ -46,7 +55,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '20'
+          node-version: '20.19.0'
           cache: npm
 
       - name: Install Node dependencies
@@ -66,8 +75,15 @@ jobs:
         run: ./vendor/bin/phpunit
 
       - name: Build assets
-        run: npm run build
+        run: |
+          npm run build
+          git diff --exit-code -- public/build
 
+      - name: Verify deployment safety
+        run: |
+          php tests/production-migrations.php
+          bash tests/deployment-workflow-safety.sh
+          python3 tests/deployment-workflow-contract.py
       - name: Prepare release artifact
         id: package-release
         run: |
@@ -75,6 +91,11 @@ jobs:
           mkdir -p release-payload/public-build
           cp -a public/build/. release-payload/public-build/
           cp scripts/create-database-backup.php release-payload/
+          cp scripts/production-migrations.php release-payload/
+          mkdir -p release-payload/docs/deployment release-payload/database
+          cp docs/deployment/production-migrations.json release-payload/docs/deployment/
+          cp -a database/migrations release-payload/database/
+          printf '%s\n' "$GITHUB_SHA" > release-payload/release-sha
           if find release-payload -type l -print -quit | grep -q .; then
             echo 'Release payload contains a symlink' >&2
             exit 1
@@ -93,7 +114,7 @@ jobs:
 
   staging:
     needs: test-and-build
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.target == 'staging'
     runs-on: ubuntu-latest
     outputs:
       release-digest: ${{ needs.test-and-build.outputs.release-digest }}
@@ -223,8 +244,8 @@ jobs:
           script_path: scripts/hostinger-deploy.sh
 
   production:
-    needs: staging
-    if: github.ref == 'refs/heads/main'
+    needs: test-and-build
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.target == 'production'
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -240,14 +261,15 @@ jobs:
           name: release-payload
           path: release-artifact
 
-      - name: Verify and extract release artifact
+      - name: Verify release artifact
         env:
-          EXPECTED_RELEASE_DIGEST: ${{ needs.staging.outputs.release-digest }}
+          EXPECTED_RELEASE_DIGEST: ${{ needs.test-and-build.outputs.release-digest }}
         run: |
           set -euo pipefail
           test -n "$EXPECTED_RELEASE_DIGEST"
           actual_digest="$(sha256sum release-artifact/release-payload.tar.gz | cut -d ' ' -f 1)"
           test "$actual_digest" = "$EXPECTED_RELEASE_DIGEST"
+          test "$(tar -xOzf release-artifact/release-payload.tar.gz ./release-sha)" = "$GITHUB_SHA"
           tar -tzf release-artifact/release-payload.tar.gz > release-artifact/contents.txt
           while IFS= read -r entry; do
             case "$entry" in
@@ -273,10 +295,20 @@ jobs:
         env:
           SSH_FINGERPRINT: ${{ secrets.HOSTINGER_SSH_FINGERPRINT }}
           SSH_PORT: ${{ secrets.HOSTINGER_SSH_PORT }}
+          SSH_HOST: ${{ secrets.HOSTINGER_SSH_HOST }}
+          SSH_USER: ${{ secrets.HOSTINGER_SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
+          HEALTHCHECK_URL: ${{ vars.PRODUCTION_HEALTHCHECK_URL }}
+          PRODUCTION_DATABASE_NAME: ${{ vars.PRODUCTION_DATABASE_NAME }}
         run: |
           set -euo pipefail
           : "${SSH_FINGERPRINT:?HOSTINGER_SSH_FINGERPRINT must be configured}"
           : "${SSH_PORT:?HOSTINGER_SSH_PORT must be configured}"
+          : "${SSH_HOST:?HOSTINGER_SSH_HOST must be configured}"
+          : "${SSH_USER:?HOSTINGER_SSH_USER must be configured}"
+          : "${SSH_PRIVATE_KEY:?HOSTINGER_SSH_PRIVATE_KEY must be configured}"
+          [[ "$HEALTHCHECK_URL" == 'https://grahamotor.cahayaarkana.site/up' ]]
+          [[ "$PRODUCTION_DATABASE_NAME" =~ ^u163968914_[a-z0-9_]+$ && "$PRODUCTION_DATABASE_NAME" != u163968914_gm_staging ]]
           [[ "$SSH_FINGERPRINT" =~ ^SHA256:[A-Za-z0-9+/]{43}=?$ ]]
           [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
           (( 10#$SSH_PORT >= 1 && 10#$SSH_PORT <= 65535 ))
@@ -304,7 +336,8 @@ jobs:
           port: ${{ secrets.HOSTINGER_SSH_PORT }}
           key: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
           fingerprint: ${{ secrets.HOSTINGER_SSH_FINGERPRINT }}
-          source: release-payload/*
+          source: release-artifact/release-payload.tar.gz
+          strip_components: 1
           target: /home/u163968914/grahamotor-build-${{ github.run_id }}
 
       - name: Deploy to production
@@ -315,6 +348,9 @@ jobs:
           DEPLOY_RUN_ID: ${{ github.run_id }}
           DEPLOY_RUN_ATTEMPT: ${{ github.run_attempt }}
           DEPLOY_SHA: ${{ github.sha }}
+          DEPLOY_DIGEST: ${{ needs.test-and-build.outputs.release-digest }}
+          PRODUCTION_HEALTHCHECK_URL: ${{ vars.PRODUCTION_HEALTHCHECK_URL }}
+          PRODUCTION_DATABASE_NAME: ${{ vars.PRODUCTION_DATABASE_NAME }}
         with:
           host: ${{ secrets.HOSTINGER_SSH_HOST }}
           username: ${{ secrets.HOSTINGER_SSH_USER }}
@@ -322,20 +358,10 @@ jobs:
           key: ${{ secrets.HOSTINGER_SSH_PRIVATE_KEY }}
           fingerprint: ${{ secrets.HOSTINGER_SSH_FINGERPRINT }}
           command_timeout: 30m
-          envs: DEPLOYMENT_MODE,DEPLOY_ENV,DEPLOY_RUN_ID,DEPLOY_RUN_ATTEMPT,DEPLOY_SHA
+          envs: DEPLOYMENT_MODE,DEPLOY_ENV,DEPLOY_RUN_ID,DEPLOY_RUN_ATTEMPT,DEPLOY_SHA,DEPLOY_DIGEST,PRODUCTION_HEALTHCHECK_URL,PRODUCTION_DATABASE_NAME
           script_path: scripts/hostinger-deploy.sh
 
-      - name: Verify production health
-        env:
-          HEALTHCHECK_URL: ${{ vars.PRODUCTION_HEALTHCHECK_URL }}
-        run: |
-          set -euo pipefail
-          : "${HEALTHCHECK_URL:?PRODUCTION_HEALTHCHECK_URL must be configured}"
-          [[ "$HEALTHCHECK_URL" == https://* ]]
-          curl --fail --silent --show-error --retry 5 --retry-delay 3 --retry-connrefused \
-            --output /dev/null --write-out 'Production HTTP %{http_code}\n' "$HEALTHCHECK_URL"
-
-      - name: Clean run-specific staging directory
+      - name: Clean run-specific production directory
         if: ${{ always() && steps.prepare-production.conclusion == 'success' }}
         uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
         env:

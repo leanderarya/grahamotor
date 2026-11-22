@@ -5,6 +5,12 @@ deployment_refuse() {
     return 1
 }
 
+deployment_private_command() {
+    label=$1
+    shift
+    "$@" >/dev/null 2>&1 || deployment_refuse "$label failed; inspect the host privately"
+}
+
 deployment_validate_run_id() {
     [ "$#" -eq 1 ] || return 1
     case "$1" in
@@ -28,6 +34,29 @@ deployment_validate_sha() {
         deployment_refuse 'release SHA must be 40 lowercase hexadecimal characters'
         return 1
     }
+}
+
+deployment_verify_release_payload() {
+    [ "$#" -eq 3 ] || return 1
+    [ -f "$1" ] && [ ! -L "$1" ] || return 1
+    deployment_validate_sha "$3" || return 1
+    actual_digest=$(php -r 'echo hash_file("sha256", $argv[1]) ?: "";' -- "$1") || return 1
+    [ -n "$actual_digest" ] && [ "$actual_digest" = "$2" ] || {
+        deployment_refuse 'uploaded artifact digest mismatch'
+        return 1
+    }
+    [ "$(tar -xOzf "$1" ./release-sha)" = "$3" ] || {
+        deployment_refuse 'uploaded artifact SHA mismatch'
+        return 1
+    }
+}
+
+deployment_verify_production_health() {
+    status=$(curl -q --fail --silent --show-error --max-time 15 --retry 3 --retry-max-time 60 \
+        --header 'Cache-Control: no-cache, no-store' --output /dev/null --write-out '%{http_code}' \
+        "$PRODUCTION_HEALTHCHECK_URL?release=$DEPLOY_SHA") || return 1
+    [ "$status" = 200 ] || { deployment_refuse 'production health must return HTTP 200'; return 1; }
+    [ "$(git -C "$DEPLOYMENT_APP_ROOT" rev-parse HEAD)" = "$DEPLOY_SHA" ] || return 1
 }
 
 deployment_validate_staging_target() {
@@ -310,17 +339,53 @@ deployment_release() {
         return 1
     }
 
+    if [ "$DEPLOY_ENV" = production ]; then
+        for tool in php composer git mysqldump tar curl flock cmp diff; do
+            command -v "$tool" >/dev/null || { deployment_refuse 'required production tooling is unavailable'; return 1; }
+        done
+        php -r 'exit(PHP_VERSION_ID >= 80300 && extension_loaded("pdo_mysql") && extension_loaded("zlib") ? 0 : 1);'
+        [ "$HOME" = "$DEPLOYMENT_PARENT" ] && [ "${PRODUCTION_HEALTHCHECK_URL-}" = 'https://grahamotor.cahayaarkana.site/up' ] || {
+            deployment_refuse 'production home or health endpoint does not match the approved target'
+            return 1
+        }
+        umask 077
+        lock="$HOME/.grahamotor-production.lock"
+        marker="$HOME/.grahamotor-production-in-progress"
+        [ ! -L "$lock" ] && [ ! -L "$marker" ] || return 1
+        exec 9>>"$lock"
+        flock -n 9 || { deployment_refuse 'production lock is already held'; return 1; }
+        [ ! -e "$marker" ] || { deployment_refuse 'prior release requires operator reconciliation'; return 1; }
+        payload="$DEPLOYMENT_STAGE_TARGET/release-payload.tar.gz"
+        deployment_verify_release_payload "$payload" "${DEPLOY_DIGEST-}" "$DEPLOY_SHA"
+        tar -xzf "$payload" -C "$DEPLOYMENT_STAGE_TARGET"
+        migration_guard="$DEPLOYMENT_STAGE_TARGET/production-migrations.php"
+    fi
+
     [ -f "$DEPLOYMENT_STAGE_TARGET/create-database-backup.php" ] \
         && [ ! -L "$DEPLOYMENT_STAGE_TARGET/create-database-backup.php" ] || {
         deployment_refuse 'release artifact backup helper is missing or a symlink'
         return 1
     }
-    php "$DEPLOYMENT_STAGE_TARGET/create-database-backup.php" \
-        "$DEPLOYMENT_APP_ROOT" "$DEPLOY_ENV" "$DEPLOY_RUN_ID" "$DEPLOY_RUN_ATTEMPT" "$DEPLOY_SHA"
-    deployment_verify_database_backup "$DEPLOY_ENV" "$DEPLOY_RUN_ID" "$DEPLOY_RUN_ATTEMPT" "$DEPLOY_SHA"
-
     git -C "$DEPLOYMENT_APP_ROOT" fetch --no-tags origin main
     git -C "$DEPLOYMENT_APP_ROOT" cat-file -e "$DEPLOY_SHA^{commit}"
+    if [ "$DEPLOY_ENV" = production ]; then
+        [ "$(git -C "$DEPLOYMENT_APP_ROOT" rev-parse FETCH_HEAD)" = "$DEPLOY_SHA" ] || {
+            deployment_refuse 'release is no longer the tip of main'
+            return 1
+        }
+        git -C "$DEPLOYMENT_APP_ROOT" archive --format=tar "$DEPLOY_SHA" \
+            database/migrations docs/deployment/production-migrations.json public/build \
+            scripts/create-database-backup.php scripts/production-migrations.php \
+            > "$DEPLOYMENT_STAGE_TARGET/release-tree.tar"
+        mkdir "$DEPLOYMENT_STAGE_TARGET/release-tree"
+        tar -xf "$DEPLOYMENT_STAGE_TARGET/release-tree.tar" -C "$DEPLOYMENT_STAGE_TARGET/release-tree"
+        tree="$DEPLOYMENT_STAGE_TARGET/release-tree"
+        diff -r "$tree/database/migrations" "$DEPLOYMENT_STAGE_TARGET/database/migrations" >/dev/null
+        cmp -s "$tree/docs/deployment/production-migrations.json" "$DEPLOYMENT_STAGE_TARGET/docs/deployment/production-migrations.json"
+        cmp -s "$tree/scripts/production-migrations.php" "$migration_guard"
+        cmp -s "$tree/scripts/create-database-backup.php" "$DEPLOYMENT_STAGE_TARGET/create-database-backup.php"
+        diff -r "$tree/public/build" "$DEPLOYMENT_STAGE_TARGET/public-build" >/dev/null
+    fi
     git -C "$DEPLOYMENT_APP_ROOT" merge-base --is-ancestor "$DEPLOY_SHA" FETCH_HEAD || {
         deployment_refuse 'release SHA is not reachable from origin/main'
         return 1
@@ -330,33 +395,87 @@ deployment_release() {
         deployment_refuse 'release would move the application checkout backwards'
         return 1
     }
-    git -C "$DEPLOYMENT_APP_ROOT" checkout --detach "$DEPLOY_SHA"
+    target=''
+    migration_guard="$DEPLOYMENT_STAGE_TARGET/production-migrations.php"
+    if [ "$DEPLOY_ENV" = production ]; then
+        target=$(php -d display_errors=0 -d log_errors=0 "$migration_guard" check \
+            "$DEPLOYMENT_APP_ROOT" "$DEPLOYMENT_STAGE_TARGET") || {
+            deployment_refuse 'initial migration and database preflight failed'
+            return 1
+        }
+    else
+        target=$(php -d display_errors=0 -d log_errors=0 "$migration_guard" staging-target \
+            "$DEPLOYMENT_APP_ROOT" "$DEPLOYMENT_STAGE_TARGET") || {
+            deployment_refuse 'staging database preflight failed'
+            return 1
+        }
+    fi
+    deployment_private_command 'Database backup' php "$DEPLOYMENT_STAGE_TARGET/create-database-backup.php" \
+        "$DEPLOYMENT_APP_ROOT" "$DEPLOY_ENV" "$DEPLOY_RUN_ID" "$DEPLOY_RUN_ATTEMPT" "$DEPLOY_SHA" "$target"
+    deployment_verify_database_backup "$DEPLOY_ENV" "$DEPLOY_RUN_ID" "$DEPLOY_RUN_ATTEMPT" "$DEPLOY_SHA"
 
-    composer -d "$DEPLOYMENT_APP_ROOT" install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+    if [ "$DEPLOY_ENV" = production ]; then
+        [ "$DEPLOYMENT_CURRENT_SHA" != "$DEPLOY_SHA" ] || {
+            deployment_refuse 'release SHA is already checked out'
+            return 1
+        }
+        verified_target=$(php -d display_errors=0 -d log_errors=0 "$migration_guard" check \
+            "$DEPLOYMENT_APP_ROOT" "$DEPLOYMENT_STAGE_TARGET") || return 1
+        [ "$verified_target" = "$target" ] || { deployment_refuse 'database target changed after backup'; return 1; }
+        main_ref=$(git -C "$DEPLOYMENT_APP_ROOT" ls-remote --exit-code origin refs/heads/main)
+        [ "${main_ref%%[[:space:]]*}" = "$DEPLOY_SHA" ] || {
+            deployment_refuse 'main advanced during preflight'
+            return 1
+        }
+        (set -C; printf '%s %s\n' "$DEPLOY_SHA" "$DEPLOY_DIGEST" > "$marker")
+        deployment_private_command 'Enter production maintenance mode' php "$DEPLOYMENT_APP_ROOT/artisan" down
+    fi
+    git -c core.hooksPath=/dev/null -C "$DEPLOYMENT_APP_ROOT" checkout --detach "$DEPLOY_SHA"
+
+    deployment_private_command 'Composer install' composer -d "$DEPLOYMENT_APP_ROOT" install \
+        --no-dev --no-interaction --prefer-dist --optimize-autoloader
 
     [ -d "$DEPLOYMENT_STAGE_TARGET/public-build" ] && [ ! -L "$DEPLOYMENT_STAGE_TARGET/public-build" ] || {
         deployment_refuse 'release artifact public-build directory is missing or a symlink'
         return 1
     }
-    deployment_clear_public_build "$DEPLOYMENT_APP_ROOT"
-    cp -a "$DEPLOYMENT_STAGE_TARGET/public-build/." "$DEPLOYMENT_APP_ROOT/public/build/"
+    if [ "$DEPLOY_ENV" = staging ]; then
+        deployment_clear_public_build "$DEPLOYMENT_APP_ROOT"
+        cp -a "$DEPLOYMENT_STAGE_TARGET/public-build/." "$DEPLOYMENT_APP_ROOT/public/build/"
+    fi
     if ! git -C "$DEPLOYMENT_APP_ROOT" diff --quiet "$DEPLOY_SHA" -- public/build \
         || [ -n "$(git -C "$DEPLOYMENT_APP_ROOT" status --porcelain --untracked-files=all -- public/build)" ]; then
-        deployment_clear_public_build "$DEPLOYMENT_APP_ROOT"
-        git -C "$DEPLOYMENT_APP_ROOT" restore --source="$DEPLOY_SHA" --worktree -- public/build
+        if [ "$DEPLOY_ENV" = staging ]; then
+            deployment_clear_public_build "$DEPLOYMENT_APP_ROOT"
+            git -C "$DEPLOYMENT_APP_ROOT" restore --source="$DEPLOY_SHA" --worktree -- public/build
+        fi
         deployment_refuse 'CI-generated public/build does not match the tracked release assets'
         return 1
     fi
 
-    php "$DEPLOYMENT_APP_ROOT/artisan" migrate:status
-    php "$DEPLOYMENT_APP_ROOT/artisan" migrate --force
-    php "$DEPLOYMENT_APP_ROOT/artisan" storage:link
-    php "$DEPLOYMENT_APP_ROOT/artisan" optimize:clear
-    php "$DEPLOYMENT_APP_ROOT/artisan" config:cache
-    php "$DEPLOYMENT_APP_ROOT/artisan" route:cache
-    php "$DEPLOYMENT_APP_ROOT/artisan" view:cache
-    php "$DEPLOYMENT_APP_ROOT/artisan" event:cache
-    php "$DEPLOYMENT_APP_ROOT/artisan" about
+    if [ "$DEPLOY_ENV" = production ]; then
+        deployment_private_command 'Migration authorization or execution' php "$migration_guard" apply \
+            "$DEPLOYMENT_APP_ROOT" "$DEPLOYMENT_STAGE_TARGET" "$target"
+    else
+        verified_target=$(php -d display_errors=0 -d log_errors=0 "$migration_guard" staging-target \
+            "$DEPLOYMENT_APP_ROOT" "$DEPLOYMENT_APP_ROOT") || return 1
+        [ "$verified_target" = "$target" ] || { deployment_refuse 'staging database target changed'; return 1; }
+        deployment_private_command 'Staging migration' php "$DEPLOYMENT_APP_ROOT/artisan" migrate --force
+    fi
+    for command in storage:link config:cache route:cache view:cache event:cache; do
+        deployment_private_command "$command" php "$DEPLOYMENT_APP_ROOT/artisan" "$command"
+    done
+    verified_target=$(php -d display_errors=0 -d log_errors=0 "$migration_guard" "$DEPLOY_ENV-target" \
+        "$DEPLOYMENT_APP_ROOT" "$DEPLOYMENT_APP_ROOT") || return 1
+    [ "$verified_target" = "$target" ] || { deployment_refuse 'database target changed after caching'; return 1; }
+    if [ "$DEPLOY_ENV" = production ]; then
+        deployment_private_command 'Exit production maintenance mode' php "$DEPLOYMENT_APP_ROOT/artisan" up
+        if ! deployment_verify_production_health; then
+            deployment_private_command 'Re-enter production maintenance mode' php "$DEPLOYMENT_APP_ROOT/artisan" down
+            return 1
+        fi
+        rm "$marker"
+    fi
 }
 
 deployment_main() {

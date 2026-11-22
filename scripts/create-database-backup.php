@@ -12,12 +12,6 @@ if ($basePath === '' || ! str_starts_with($basePath, '/')
     exit(1);
 }
 
-$basePath = rtrim($basePath, '/');
-require $basePath.'/vendor/autoload.php';
-
-$app = require $basePath.'/bootstrap/app.php';
-$app->make(Kernel::class)->bootstrap();
-
 $environment = $argv[2] ?? '';
 $runId = $argv[3] ?? '';
 $runAttempt = $argv[4] ?? '';
@@ -25,6 +19,8 @@ $releaseSha = $argv[5] ?? '';
 
 $backupFile = null;
 $evidenceFile = null;
+$ownsBackup = false;
+$ownsEvidence = false;
 
 try {
     if (! in_array($environment, ['staging', 'production'], true)
@@ -52,8 +48,21 @@ try {
         throw new RuntimeException('Backup directory permissions are too broad.');
     }
 
-    $connectionName = (string) config('database.default');
-    $database = config("database.connections.{$connectionName}");
+    if ($environment === 'production') {
+        require __DIR__.'/production-migrations.php';
+        $app = productionMigrationApplication($basePath, 'check');
+        [, $connection, $target] = releaseDatabaseTarget($app, 'production');
+        if ($target !== ($argv[6] ?? null)) {
+            throw new RuntimeException('Production backup connection changed after preflight.');
+        }
+        $database = $connection->getConfig();
+    } else {
+        require $basePath.'/vendor/autoload.php';
+        $app = require $basePath.'/bootstrap/app.php';
+        $app->make(Kernel::class)->bootstrap();
+        $connectionName = (string) config('database.default');
+        $database = config("database.connections.{$connectionName}");
+    }
     if (! is_array($database) || ($database['driver'] ?? null) !== 'mysql') {
         throw new RuntimeException('A MySQL database connection is required.');
     }
@@ -63,6 +72,11 @@ try {
     $databaseName = (string) ($database['database'] ?? '');
     $username = (string) ($database['username'] ?? '');
     $password = (string) ($database['password'] ?? '');
+    if ($environment === 'staging' && ($databaseName !== 'u163968914_gm_staging'
+        || $username !== 'u163968914_gm_staging' || ! empty($database['url'])
+        || ! empty($database['read']) || ! empty($database['write']) || ! empty($database['unix_socket']))) {
+        throw new RuntimeException('Staging backup target does not match the authorized connection.');
+    }
     if ($host === '' || ! preg_match('/^[0-9]+$/D', $port)
         || $databaseName === '' || $username === '') {
         throw new RuntimeException('Database connection configuration is incomplete.');
@@ -75,9 +89,18 @@ try {
         || file_exists($evidenceFile) || is_link($evidenceFile)) {
         throw new RuntimeException('Backup evidence path already exists.');
     }
+    $reservation = @fopen($backupFile, 'x');
+    if ($reservation === false) {
+        throw new RuntimeException('Could not reserve backup path.');
+    }
+    $ownsBackup = true;
+    fclose($reservation);
 
     $command = [
         'mysqldump',
+        '--no-defaults',
+        '--protocol=TCP',
+        '--events',
         '--single-transaction',
         '--quick',
         '--routines',
@@ -169,6 +192,7 @@ try {
     if ($evidence === false) {
         throw new RuntimeException('Could not create backup checksum evidence.');
     }
+    $ownsEvidence = true;
     $evidenceLine = "{$backupHash}  {$backupName}\n";
     $evidenceWriteSucceeded = fwrite($evidence, $evidenceLine) === strlen($evidenceLine)
         && fflush($evidence);
@@ -179,10 +203,10 @@ try {
 
     fwrite(STDOUT, "Database backup verified: {$backupName}\n");
 } catch (Throwable) {
-    if ($backupFile !== null && is_file($backupFile) && ! is_link($backupFile)) {
+    if ($ownsBackup && is_file($backupFile) && ! is_link($backupFile)) {
         unlink($backupFile);
     }
-    if ($evidenceFile !== null && is_file($evidenceFile) && ! is_link($evidenceFile)) {
+    if ($ownsEvidence && is_file($evidenceFile) && ! is_link($evidenceFile)) {
         unlink($evidenceFile);
     }
     fwrite(STDERR, "Database backup failed; migration must not run.\n");

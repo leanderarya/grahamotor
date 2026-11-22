@@ -122,8 +122,8 @@ function config(string $key): mixed
             'driver' => 'mysql',
             'host' => '127.0.0.1',
             'port' => '3306',
-            'database' => 'testing',
-            'username' => 'testing',
+            'database' => 'u163968914_gm_staging',
+            'username' => 'u163968914_gm_staging',
             'password' => 'backup-test-secret',
         ],
         default => null,
@@ -153,6 +153,102 @@ case "$backup_output" in
 esac
 deployment_verify_database_backup staging 67890 1 "$backup_create_sha"
 pass 'backup helper creates verifiable evidence without logging credentials'
+expect_rejected 'existing release backup cannot be overwritten' \
+    env PATH="$fake_bin:$PATH" php "$repo_root/scripts/create-database-backup.php" \
+    "$backup_test_app" staging 67890 1 "$backup_create_sha"
+deployment_verify_database_backup staging 67890 1 "$backup_create_sha"
+pass 'rejected duplicate backup preserves the original backup and checksum'
+
+production_backup_app="$temporary_root/production-backup-test-app"
+mkdir -p "$production_backup_app/.git" "$production_backup_app/vendor" "$production_backup_app/bootstrap"
+cat > "$production_backup_app/vendor/autoload.php" <<PHP
+<?php
+require '$repo_root/vendor/autoload.php';
+PHP
+cat > "$production_backup_app/bootstrap/app.php" <<'PHP'
+<?php
+return new class($appRoot) extends Illuminate\Foundation\Application {
+    public function bootstrapWith(array $bootstrappers) {}
+
+    public function register($provider, $force = false) {}
+
+    public function make($abstract, array $parameters = [])
+    {
+        if ($abstract !== 'migrator') {
+            return parent::make($abstract, $parameters);
+        }
+
+        return new class {
+            public function resolveConnection($name)
+            {
+                return new class {
+                    public function getConfig(): array
+                    {
+                        return [
+                            'driver' => 'mysql',
+                            'host' => '127.0.0.1',
+                            'port' => '3306',
+                            'database' => getenv('PRODUCTION_DATABASE_NAME'),
+                            'username' => 'production-test-user',
+                            'password' => 'backup-production-test-secret',
+                            'prefix' => '',
+                        ];
+                    }
+
+                    public function getDriverName(): string
+                    {
+                        return 'mysql';
+                    }
+
+                    public function getDatabaseName(): string
+                    {
+                        return getenv('PRODUCTION_DATABASE_NAME');
+                    }
+
+                    public function selectOne(string $query, array $bindings = [], bool $useReadPdo = true): object
+                    {
+                        return (object) [
+                            'db' => getenv('PRODUCTION_DATABASE_NAME'),
+                            'account' => 'production-test-user@127.0.0.1',
+                            'host' => 'fake-db-host',
+                            'port' => 3306,
+                            'server_id' => 123,
+                        ];
+                    }
+                };
+            }
+        };
+    }
+};
+PHP
+cat > "$fake_bin/mysqldump" <<'SH'
+#!/bin/sh
+[ "${MYSQL_PWD-}" = 'backup-production-test-secret' ] || exit 7
+printf '%s\n' '-- MySQL dump 8.0' 'CREATE TABLE `production_example` (`id` INT);'
+SH
+chmod 700 "$fake_bin/mysqldump"
+production_database_name='u163968914_gm_production_test'
+production_target="$(
+    PRODUCTION_DATABASE_NAME="$production_database_name" php -r '
+        require $argv[1]."/scripts/production-migrations.php";
+        $app = productionMigrationApplication($argv[2], "check");
+        [, , $target] = releaseDatabaseTarget($app, "production");
+        echo $target;
+    ' "$repo_root" "$production_backup_app"
+)"
+production_backup_sha='bcdef0123456789abcdef0123456789abcdef012'
+production_backup_output="$(
+    PATH="$fake_bin:$PATH" \
+    PRODUCTION_DATABASE_NAME="$production_database_name" \
+    HOME="$home" \
+    php "$repo_root/scripts/create-database-backup.php" \
+        "$production_backup_app" production 67891 1 "$production_backup_sha" "$production_target"
+)"
+case "$production_backup_output" in
+    *backup-production-test-secret*) printf 'FAIL: production backup helper printed database credentials\n' >&2; exit 1 ;;
+esac
+deployment_verify_database_backup production 67891 1 "$production_backup_sha"
+pass 'production backup resolves the authorized target with a fake MySQL connection'
 
 failed_backup_bin="$temporary_root/failing-bin"
 mkdir "$failed_backup_bin"
@@ -188,6 +284,40 @@ expect_rejected 'corrupt backup rejected' \
 test -f "$sibling/sentinel"
 test -d "$approved_parent"
 pass 'cleanup guards preserve parent and sibling directories'
+
+payload_dir="$temporary_root/payload"
+mkdir "$payload_dir"
+printf '%s\n' "$backup_create_sha" > "$payload_dir/release-sha"
+payload="$temporary_root/payload.tar.gz"
+tar -czf "$payload" -C "$payload_dir" .
+payload_digest="$(php -r 'echo hash_file("sha256", $argv[1]);' -- "$payload")"
+deployment_verify_release_payload "$payload" "$payload_digest" "$backup_create_sha"
+pass 'archive digest and embedded release SHA accepted'
+expect_rejected 'wrong embedded release SHA rejected despite matching archive digest' \
+    deployment_verify_release_payload "$payload" "$payload_digest" "$backup_sha"
+expect_rejected 'wrong archive digest rejected before extraction' \
+    deployment_verify_release_payload "$payload" "$(printf '%064d' 0)" "$backup_create_sha"
+
+(
+    DEPLOY_SHA="$backup_create_sha"
+    DEPLOYMENT_APP_ROOT="$temporary_root"
+    PRODUCTION_HEALTHCHECK_URL='https://health.invalid/up'
+    curl() {
+        [[ "${*: -1}" == "$PRODUCTION_HEALTHCHECK_URL?release=$DEPLOY_SHA" ]] || return 1
+        printf '%s' "$mock_status"
+        return "$mock_curl_exit"
+    }
+    git() { printf '%s\n' "$mock_head"; }
+    mock_status=200 mock_curl_exit=0 mock_head="$DEPLOY_SHA"
+    deployment_verify_production_health
+    pass 'production health accepts only exact HTTP 200 and matching checkout'
+    mock_status=302
+    expect_rejected 'production health rejects a redirect' deployment_verify_production_health
+    mock_status=200 mock_curl_exit=28
+    expect_rejected 'production health rejects a failed transport' deployment_verify_production_health
+    mock_curl_exit=0 mock_head="$backup_sha"
+    expect_rejected 'production health rejects wrong checkout SHA' deployment_verify_production_health
+)
 
 expect_rejected 'remote prepare mode rejects an empty run ID' \
     env DEPLOYMENT_MODE=prepare DEPLOY_RUN_ID='' sh "$repo_root/scripts/hostinger-deploy.sh"
