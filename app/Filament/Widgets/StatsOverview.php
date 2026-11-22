@@ -2,18 +2,23 @@
 
 namespace App\Filament\Widgets;
 
-use App\Models\Transaction;
 use App\Models\Expense;
 use App\Models\Product;
+use App\Models\Transaction;
+use Carbon\Carbon;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class StatsOverview extends BaseWidget
 {
     protected static ?string $pollingInterval = '60s';
+
+    public static function canView(): bool
+    {
+        return auth()->user()?->isOwner() ?? false;
+    }
 
     protected function getStats(): array
     {
@@ -26,13 +31,13 @@ class StatsOverview extends BaseWidget
         // --- SINGLE QUERY: All transaction aggregates at once ---
         $agg = Transaction::query()
             ->where('status', 'paid')
-            ->selectRaw("
+            ->selectRaw('
                 COALESCE(SUM(CASE WHEN created_at BETWEEN ? AND ? THEN total_amount ELSE 0 END), 0) as omset_this_month,
                 COALESCE(SUM(CASE WHEN created_at BETWEEN ? AND ? THEN total_amount ELSE 0 END), 0) as omset_last_month,
                 COALESCE(SUM(CASE WHEN created_at BETWEEN ? AND ? THEN total_profit ELSE 0 END), 0) as gross_profit,
                 COALESCE(SUM(CASE WHEN DATE(created_at) = ? THEN total_amount ELSE 0 END), 0) as today_sales,
                 COUNT(CASE WHEN DATE(created_at) = ? THEN 1 END) as today_count
-            ", [
+            ', [
                 $startOfMonth, $endOfMonth,
                 $startOfLastMonth, $endOfLastMonth,
                 $startOfMonth, $endOfMonth,
@@ -76,23 +81,23 @@ class StatsOverview extends BaseWidget
         $totalAset = Cache::remember('dashboard_asset_value', 300, fn () => Product::query()->sum(DB::raw('stock * cost_price')));
 
         return [
-            Stat::make('Penjualan Hari Ini', 'Rp ' . number_format($todaySales, 0, ',', '.'))
-                ->description($todayCount . ' transaksi hari ini')
+            Stat::make('Penjualan Hari Ini', 'Rp '.number_format($todaySales, 0, ',', '.'))
+                ->description($todayCount.' transaksi hari ini')
                 ->descriptionIcon('heroicon-m-shopping-cart')
                 ->color('warning'),
 
-            Stat::make('Omset Bulan Ini', 'Rp ' . number_format($omsetThisMonth, 0, ',', '.'))
+            Stat::make('Omset Bulan Ini', 'Rp '.number_format($omsetThisMonth, 0, ',', '.'))
                 ->description($omsetDesc)
                 ->descriptionIcon($omsetIcon)
                 ->chart($chartData)
                 ->color($omsetColor),
 
-            Stat::make('Profit Bersih (Bulan Ini)', 'Rp ' . number_format($netProfit, 0, ',', '.'))
+            Stat::make('Profit Bersih (Bulan Ini)', 'Rp '.number_format($netProfit, 0, ',', '.'))
                 ->description('Margin - Biaya Ops (Bulan Ini)')
                 ->descriptionIcon($netProfit > 0 ? 'heroicon-m-face-smile' : 'heroicon-m-face-frown')
                 ->color($netProfit >= 0 ? 'success' : 'danger'),
 
-            Stat::make('Nilai Aset Gudang', 'Rp ' . number_format($totalAset, 0, ',', '.'))
+            Stat::make('Nilai Aset Gudang', 'Rp '.number_format($totalAset, 0, ',', '.'))
                 ->description('Total modal mandek di barang')
                 ->descriptionIcon('heroicon-m-archive-box')
                 ->color('info'),

@@ -43,6 +43,7 @@ class CheckoutPaymentErrorTest extends TestCase
         $response = $this->actingAs($user)
             ->from(route('transactions.create'))
             ->post(route('transactions.store'), [
+                'cashier_session_id' => 1,
                 'cart' => [['id' => $product->id, 'qty' => 1]],
                 'payment_method' => 'cash',
                 'amount_paid' => 105000,
@@ -66,6 +67,7 @@ class CheckoutPaymentErrorTest extends TestCase
         $this->actingAs($user)
             ->from(route('transactions.create'))
             ->post(route('transactions.store'), [
+                'cashier_session_id' => 1,
                 'cart' => [['id' => $product->id, 'qty' => 99]],
                 'payment_method' => 'cash',
                 'amount_paid' => 105000,
@@ -80,7 +82,7 @@ class CheckoutPaymentErrorTest extends TestCase
         $user = $this->kasir();
         $product = $this->product();
 
-        \App\Models\CashierSession::create([
+        $session = \App\Models\CashierSession::create([
             'user_id' => $user->id,
             'opening_cash' => 100000,
             'opened_at' => now(),
@@ -89,6 +91,7 @@ class CheckoutPaymentErrorTest extends TestCase
         $this->actingAs($user)
             ->from(route('transactions.create'))
             ->post(route('transactions.store'), [
+                'cashier_session_id' => $session->id,
                 'cart' => [['id' => $product->id, 'qty' => 1]],
                 'payment_method' => 'cash',
                 'amount_paid' => 105000,
@@ -107,7 +110,7 @@ class CheckoutPaymentErrorTest extends TestCase
         $user = $this->kasir();
         $product = $this->product();
 
-        \App\Models\CashierSession::create([
+        $session = \App\Models\CashierSession::create([
             'user_id' => $user->id,
             'opening_cash' => 100000,
             'opened_at' => now(),
@@ -116,6 +119,7 @@ class CheckoutPaymentErrorTest extends TestCase
         $draft = \App\Models\Transaction::create([
             'invoice_number' => 'INV-DRAFT-1',
             'user_id' => $user->id,
+            'cashier_session_id' => $session->id,
             'total_amount' => 105000,
             'total_profit' => 0,
             'status' => 'draft',
@@ -134,6 +138,7 @@ class CheckoutPaymentErrorTest extends TestCase
             ->from(route('transactions.checkout', ['transaction' => $draft->id]))
             ->post(route('transactions.store'), [
                 'draft_id' => $draft->id,
+                'cashier_session_id' => $session->id,
                 'cart' => [['id' => $product->id, 'qty' => 1]],
                 'payment_method' => 'cash',
                 'amount_paid' => 105000,

@@ -1,6 +1,12 @@
 @once
     {{-- Load Library Sekali Saja --}}
-    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <script
+        src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"
+        integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+"
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer"
+        type="text/javascript"
+    ></script>
 @endonce
 
 <div

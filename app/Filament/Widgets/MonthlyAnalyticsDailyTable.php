@@ -28,19 +28,22 @@ class MonthlyAnalyticsDailyTable extends TableWidget
             $this->getSelectedAnalyticsMonth($this->filters)->copy()->startOfMonth(),
             $this->getSelectedAnalyticsMonth($this->filters)->copy()->endOfMonth(),
         ];
+        $canViewProfit = auth()->user()?->isOwner() ?? false;
+        $query = Transaction::query()
+            ->selectRaw('DATE(created_at) as sales_date')
+            ->selectRaw('SUM(total_amount) as total_revenue')
+            ->selectRaw('COUNT(*) as transaction_count')
+            ->where('status', 'paid')
+            ->whereBetween('created_at', [$monthStart, $monthEnd])
+            ->groupBy('sales_date')
+            ->orderBy('sales_date');
+
+        if ($canViewProfit) {
+            $query->selectRaw('SUM(total_profit) as total_profit_amount');
+        }
 
         return $table
-            ->query(
-                Transaction::query()
-                    ->selectRaw('DATE(created_at) as sales_date')
-                    ->selectRaw('SUM(total_amount) as total_revenue')
-                    ->selectRaw('SUM(total_profit) as total_profit_amount')
-                    ->selectRaw('COUNT(*) as transaction_count')
-                    ->where('status', 'paid')
-                    ->whereBetween('created_at', [$monthStart, $monthEnd])
-                    ->groupBy('sales_date')
-                    ->orderBy('sales_date')
-            )
+            ->query($query)
             ->heading('Rekap Penjualan Harian')
             ->defaultPaginationPageOption(31)
             ->columns([
@@ -58,7 +61,8 @@ class MonthlyAnalyticsDailyTable extends TableWidget
                     ->label('Profit')
                     ->money('IDR')
                     ->color('success')
-                    ->sortable(),
+                    ->sortable()
+                    ->visible($canViewProfit),
 
                 Tables\Columns\TextColumn::make('transaction_count')
                     ->label('Record')

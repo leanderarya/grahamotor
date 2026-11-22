@@ -5,26 +5,46 @@
  * Components call posService.openSession() etc. and don't care which transport fires.
  */
 import { router } from '@inertiajs/react';
+import type { FormDataConvertible } from '@inertiajs/core';
 import { route } from 'ziggy-js';
 import { isNative } from '@/lib/capacitor';
 import { getCsrfToken } from '@/lib/csrf';
 import { apiClient } from '@/api/client';
 import { productCache } from '@/lib/product-cache';
+import type { CashierSession } from '@/types/pos';
 
 // ── Session ──────────────────────────────────────────────────────────────────
 
-export async function openSession(openingCash: number, openingNotes: string): Promise<void> {
+export async function openSession(openingCash: number, openingNotes: string): Promise<CashierSession | null> {
     if (isNative()) {
-        await apiClient.post('/session/open', {
+        const response = await apiClient.post<{ session: CashierSession }>('/session/open', {
             opening_cash: openingCash,
             opening_notes: openingNotes,
         });
-        return;
+        return response.session;
     }
-    router.post(route('transactions.session.open'), {
-        opening_cash: openingCash,
-        opening_notes: openingNotes,
+
+    const response = await fetch(route('transactions.session.open'), {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-XSRF-TOKEN': getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+            Accept: 'application/json',
+        },
+        body: JSON.stringify({
+            opening_cash: openingCash,
+            opening_notes: openingNotes,
+        }),
     });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || 'Gagal membuka kasir.');
+    }
+
+    const data = await response.json();
+    return data.session ?? null;
 }
 
 export async function closeSession(
@@ -65,7 +85,7 @@ export async function closeSession(
 
 // ── Drafts ───────────────────────────────────────────────────────────────────
 
-interface DraftCart {
+interface DraftCart extends Record<string, FormDataConvertible> {
     id: number;
     qty: number;
 }
@@ -74,20 +94,34 @@ export async function saveDraft(
     cart: DraftCart[],
     customerType: string,
     draftId: number | null,
+    cashierSessionId: number | null,
 ): Promise<void> {
+    const payload = {
+        cart,
+        customer_type: customerType,
+        draft_id: draftId,
+        cashier_session_id: cashierSessionId,
+    };
+
     if (isNative()) {
-        await apiClient.post('/draft', { cart, customer_type: customerType, draft_id: draftId });
+        await apiClient.post('/draft', payload);
         return;
     }
-    router.post(route('transactions.draft.save'), { cart, customer_type: customerType, draft_id: draftId });
+    router.post(route('transactions.draft.save'), payload);
 }
 
 export async function autoSaveDraft(
     cart: DraftCart[],
     customerType: string,
     draftId: number | null,
+    cashierSessionId: number | null,
 ): Promise<{ draft_id?: number } | null> {
-    const payload = { cart, customer_type: customerType, draft_id: draftId };
+    const payload = {
+        cart,
+        customer_type: customerType,
+        draft_id: draftId,
+        cashier_session_id: cashierSessionId,
+    };
 
     if (isNative()) {
         return apiClient.put('/draft/auto-save', payload);
@@ -108,9 +142,15 @@ export async function autoSaveDraft(
     return response.json();
 }
 
-export async function clearDraft(draftId: number | null): Promise<void> {
+export async function clearDraft(
+    draftId: number | null,
+    cashierSessionId: number | null,
+): Promise<void> {
     if (isNative()) {
-        await apiClient.post('/draft/clear', { draft_id: draftId });
+        await apiClient.post('/draft/clear', {
+            draft_id: draftId,
+            cashier_session_id: cashierSessionId,
+        });
         return;
     }
 
@@ -121,14 +161,18 @@ export async function clearDraft(draftId: number | null): Promise<void> {
             'X-XSRF-TOKEN': getCsrfToken(),
             'X-Requested-With': 'XMLHttpRequest',
         },
-        body: JSON.stringify({ draft_id: draftId }),
+        body: JSON.stringify({
+            draft_id: draftId,
+            cashier_session_id: cashierSessionId,
+        }),
     });
 }
 
 // ── Transactions ─────────────────────────────────────────────────────────────
 
-interface PaymentPayload {
-    draft_id: number;
+interface PaymentPayload extends Record<string, FormDataConvertible> {
+    draft_id: number | null;
+    cashier_session_id: number;
     cart: { id: number; qty: number }[];
     payment_method: string;
     amount_paid: number;

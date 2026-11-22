@@ -29,6 +29,11 @@ class MonthlyAnalytics extends Dashboard
 
     protected static ?string $title = 'Analitik Bulanan';
 
+    public static function canAccess(): bool
+    {
+        return auth()->user()?->isOwner() || auth()->user()?->isAdmin();
+    }
+
     protected ?string $heading = 'Analitik Bulanan';
 
     protected ?string $subheading = 'Analisis bulanan native Filament untuk data transaksi dan impor Excel.';

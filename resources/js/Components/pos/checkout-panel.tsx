@@ -43,6 +43,7 @@ export function CheckoutPanel({
     totalAmount,
     totalQty,
     isWorkshop,
+    hasOpenSession,
     onCustomerTypeChange,
     onSaveDraft,
     mobile = false,
@@ -144,8 +145,9 @@ export function CheckoutPanel({
                         <button
                             type="button"
                             onClick={clearCart}
+                            disabled={!hasOpenSession}
                             aria-label="Kosongkan keranjang"
-                            className="flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                            className="flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                             <Trash2 aria-hidden="true" className="h-4 w-4" />
                         </button>
@@ -193,8 +195,9 @@ export function CheckoutPanel({
                                     <button
                                         type="button"
                                         onClick={() => updateQty(item.id, -1)}
+                                        disabled={!hasOpenSession}
                                         aria-label={`Kurangi jumlah ${getProductLabel(item)}`}
-                                        className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50"
+                                        className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                                     >
                                         <Minus
                                             aria-hidden="true"
@@ -207,8 +210,9 @@ export function CheckoutPanel({
                                     <button
                                         type="button"
                                         onClick={() => updateQty(item.id, 1)}
+                                        disabled={!hasOpenSession}
                                         aria-label={`Tambah jumlah ${getProductLabel(item)}`}
-                                        className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50"
+                                        className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                                     >
                                         <Plus
                                             aria-hidden="true"
@@ -227,8 +231,9 @@ export function CheckoutPanel({
                                     <button
                                         type="button"
                                         onClick={() => removeItem(item.id)}
+                                        disabled={!hasOpenSession}
                                         aria-label={`Hapus ${getProductLabel(item)} dari keranjang`}
-                                        className="flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-red-50 hover:text-red-500"
+                                        className="flex h-11 w-11 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
                                     >
                                         <Trash2
                                             aria-hidden="true"
@@ -252,9 +257,10 @@ export function CheckoutPanel({
                     <button
                         type="button"
                         onClick={() => onCustomerTypeChange('general')}
+                        disabled={!hasOpenSession}
                         aria-pressed={!isWorkshop}
                         className={cn(
-                            'min-h-11 flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors',
+                            'min-h-11 flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40',
                             !isWorkshop
                                 ? 'border border-slate-200 bg-white text-slate-950'
                                 : 'text-slate-500',
@@ -265,9 +271,10 @@ export function CheckoutPanel({
                     <button
                         type="button"
                         onClick={() => onCustomerTypeChange('workshop')}
+                        disabled={!hasOpenSession}
                         aria-pressed={isWorkshop}
                         className={cn(
-                            'min-h-11 flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors',
+                            'min-h-11 flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40',
                             isWorkshop
                                 ? 'border border-slate-200 bg-white text-amber-700'
                                 : 'text-slate-500',
@@ -298,7 +305,7 @@ export function CheckoutPanel({
                 <button
                     type="button"
                     onClick={onSaveDraft}
-                    disabled={cart.length === 0}
+                    disabled={cart.length === 0 || !hasOpenSession}
                     className="min-h-12 w-full rounded-lg bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                     Bayar Sekarang

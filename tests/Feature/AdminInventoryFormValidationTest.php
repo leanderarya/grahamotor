@@ -71,20 +71,18 @@ class AdminInventoryFormValidationTest extends TestCase
             ->assertHasFormErrors(['physical_stock' => 'required']);
     }
 
-    public function test_product_stock_and_prices_must_be_present_and_numeric_when_required(): void
+    public function test_admin_product_stock_and_sell_price_must_be_present_and_numeric(): void
     {
         Livewire::test(CreateProduct::class)
             ->fillForm([
                 'sku' => 'TEST-001',
                 'name' => 'Test Product',
                 'stock' => 'not-a-number',
-                'cost_price' => 'not-a-number',
                 'sell_price' => 'not-a-number',
             ])
             ->call('create')
             ->assertHasFormErrors([
                 'stock' => 'numeric',
-                'cost_price' => 'numeric',
                 'sell_price' => 'numeric',
             ]);
 
@@ -93,14 +91,39 @@ class AdminInventoryFormValidationTest extends TestCase
                 'sku' => 'TEST-002',
                 'name' => 'Test Product',
                 'stock' => null,
-                'cost_price' => null,
                 'sell_price' => null,
             ])
             ->call('create')
             ->assertHasFormErrors([
                 'stock' => 'required',
-                'cost_price' => 'required',
                 'sell_price' => 'required',
             ]);
+    }
+
+    public function test_owner_product_cost_price_must_be_present_and_numeric(): void
+    {
+        $this->actingAs(User::factory()->create(['role' => 'owner']));
+
+        Livewire::test(CreateProduct::class)
+            ->fillForm([
+                'sku' => 'OWNER-001',
+                'name' => 'Owner Product',
+                'stock' => 5,
+                'cost_price' => 'not-a-number',
+                'sell_price' => 100,
+            ])
+            ->call('create')
+            ->assertHasFormErrors(['cost_price' => 'numeric']);
+
+        Livewire::test(CreateProduct::class)
+            ->fillForm([
+                'sku' => 'OWNER-002',
+                'name' => 'Owner Product',
+                'stock' => 5,
+                'cost_price' => null,
+                'sell_price' => 100,
+            ])
+            ->call('create')
+            ->assertHasFormErrors(['cost_price' => 'required']);
     }
 }

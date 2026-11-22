@@ -1,11 +1,10 @@
 <?php
 
+use App\Http\Controllers\PinLoginController;
+use App\Http\Controllers\TransactionController;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
-use Laravel\Fortify\Features;
-use App\Http\Controllers\TransactionController;
-use App\Http\Controllers\PinLoginController;
-use Illuminate\Support\Facades\Auth;
 
 // --- LOGIN KASIR (PIN) ---
 Route::get('/pin-login', [PinLoginController::class, 'show'])->name('pin.login');
@@ -13,18 +12,20 @@ Route::post('/pin-login', [PinLoginController::class, 'store'])->name('pin.login
 
 // --- ROUTE UTAMA (ROOT) ---
 Route::get('/', function () {
-    if (!auth()->check()) {
+    if (! auth()->check()) {
         // Kasir ke PIN login, admin ke login biasa
         return redirect()->route('pin.login');
     }
 
     $user = auth()->user();
 
-    if ($user->role === 'admin') {
+    if ($user->isOwner() || $user->isAdmin()) {
         return redirect('/admin');
     }
 
-    return redirect()->route('transactions.create');
+    return $user->isCashier()
+        ? redirect()->route('transactions.create')
+        : redirect()->route('pin.login');
 });
 
 Route::post('/logout', function () {
@@ -35,7 +36,7 @@ Route::post('/logout', function () {
     request()->session()->regenerateToken();
 
     // Admin balik ke login biasa, kasir ke PIN login
-    if ($user && $user->role === 'admin') {
+    if ($user && ($user->isOwner() || $user->isAdmin())) {
         return redirect('/login');
     }
 
@@ -55,11 +56,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/dashboard', function () {
         $user = auth()->user();
 
-        if ($user->role === 'admin') {
+        if ($user->isOwner() || $user->isAdmin()) {
             return redirect('/admin'); // Admin ke Filament
         }
 
-        if ($user->role === 'kasir') {
+        if ($user->isCashier()) {
             return redirect()->route('transactions.create'); // Kasir ke POS
         }
 

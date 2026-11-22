@@ -6,6 +6,8 @@ const DB_VERSION = 1;
 
 interface QueuedTransaction {
     id: string; // UUID
+    user_id: number;
+    cashier_session_id: number;
     cart: Array<{ id: number; qty: number }>;
     payment_method: string;
     amount_paid: number;
@@ -16,6 +18,14 @@ interface QueuedTransaction {
     status: 'pending' | 'sent' | 'failed';
     error?: string;
 }
+
+interface SyncContext {
+    userId: number;
+    sessionId: number | null;
+    isOverdue: boolean;
+}
+
+let syncInProgress = false;
 
 function openDB(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
@@ -145,39 +155,96 @@ export const offlineQueue = {
             change_amount: number;
             customer_type: string;
             draft_id: number | null;
+            cashier_session_id: number;
         }) => Promise<unknown>,
-    ): Promise<{ sent: number; failed: number }> {
-        const pending = await this.getPending();
+        context: SyncContext,
+    ): Promise<{ sent: number; failed: number; skipped: number }> {
+        if (syncInProgress) {
+            return { sent: 0, failed: 0, skipped: 0 };
+        }
+
+        syncInProgress = true;
         let sent = 0;
         let failed = 0;
+        let skipped = 0;
 
-        for (const item of pending) {
-            try {
-                await postFn({
-                    cart: item.cart,
-                    payment_method: item.payment_method,
-                    amount_paid: item.amount_paid,
-                    change_amount: item.change_amount,
-                    customer_type: item.customer_type,
-                    draft_id: item.draft_id,
-                });
-                await this.markSent(item.id);
-                sent++;
-            } catch (error: unknown) {
-                const message =
-                    error instanceof Error
-                        ? error.message
-                        : 'Sync failed';
-                await this.markFailed(item.id, message);
-                failed++;
+        try {
+            const pending = await this.getPending();
+
+            for (const item of pending) {
+                if (
+                    !Number.isInteger(item.user_id) ||
+                    !Number.isInteger(item.cashier_session_id)
+                ) {
+                    await this.markFailed(
+                        item.id,
+                        'Identitas kasir atau shift tidak tersimpan. Transaksi tidak dialihkan.',
+                    );
+                    failed++;
+                    continue;
+                }
+
+                if (item.user_id !== context.userId) {
+                    skipped++;
+                    continue;
+                }
+
+                if (context.isOverdue) {
+                    await this.markFailed(
+                        item.id,
+                        'Shift melewati batas 00.00 WIB. Transaksi offline tidak dialihkan ke shift berikutnya.',
+                    );
+                    failed++;
+                    continue;
+                }
+
+                if (
+                    context.sessionId === null ||
+                    item.cashier_session_id !== context.sessionId
+                ) {
+                    await this.markFailed(
+                        item.id,
+                        'Shift asal sudah tidak aktif. Transaksi offline tidak dialihkan.',
+                    );
+                    failed++;
+                    continue;
+                }
+
+                try {
+                    await postFn({
+                        cart: item.cart,
+                        payment_method: item.payment_method,
+                        amount_paid: item.amount_paid,
+                        change_amount: item.change_amount,
+                        customer_type: item.customer_type,
+                        draft_id: item.draft_id,
+                        cashier_session_id: item.cashier_session_id,
+                    });
+                    await this.markSent(item.id);
+                    sent++;
+                } catch (error: unknown) {
+                    const message =
+                        error instanceof Error
+                            ? error.message
+                            : typeof error === 'object' &&
+                                error !== null &&
+                                'message' in error &&
+                                typeof error.message === 'string'
+                              ? error.message
+                              : 'Sync failed';
+                    await this.markFailed(item.id, message);
+                    failed++;
+                }
             }
-        }
 
-        if (sent > 0) {
-            await this.clearSent();
-        }
+            if (sent > 0) {
+                await this.clearSent();
+            }
 
-        return { sent, failed };
+            return { sent, failed, skipped };
+        } finally {
+            syncInProgress = false;
+        }
     },
 
     /**
@@ -192,19 +259,30 @@ export const offlineQueue = {
             change_amount: number;
             customer_type: string;
             draft_id: number | null;
+            cashier_session_id: number;
         }) => Promise<unknown>,
-    ): void {
-        if (!isNative()) return;
+        context: SyncContext,
+        onResult?: (result: { sent: number; failed: number; skipped: number }) => void,
+    ): () => void {
+        if (!isNative()) return () => {};
 
-        window.addEventListener('online', async () => {
+        let running = false;
+        const syncPending = async () => {
+            if (running) return;
+            running = true;
             try {
-                const result = await this.sync(postFn);
-                if (result.sent > 0) {
-                    console.log(`[offlineQueue] Synced ${result.sent} queued transactions.`);
-                }
+                const result = await this.sync(postFn, context);
+                onResult?.(result);
             } catch (err) {
                 console.error('[offlineQueue] Auto-sync failed:', err);
+            } finally {
+                running = false;
             }
-        });
+        };
+
+        window.addEventListener('online', syncPending);
+        if (navigator.onLine) void syncPending();
+
+        return () => window.removeEventListener('online', syncPending);
     },
 };

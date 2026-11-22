@@ -2,8 +2,8 @@
 
 namespace App\Http\Responses;
 
-use Laravel\Fortify\Contracts\LoginResponse as LoginResponseContract;
-use Inertia\Inertia; // <--- JANGAN LUPA IMPORT INI
+use Inertia\Inertia;
+use Laravel\Fortify\Contracts\LoginResponse as LoginResponseContract; // <--- JANGAN LUPA IMPORT INI
 
 class LoginResponse implements LoginResponseContract
 {
@@ -12,7 +12,7 @@ class LoginResponse implements LoginResponseContract
         $user = auth()->user();
 
         // Cek Role Database
-        if ($user->role === 'admin') {
+        if ($user->isOwner() || $user->isAdmin()) {
             return Inertia::location(url('/admin'));
         }
 

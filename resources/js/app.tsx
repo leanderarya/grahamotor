@@ -10,7 +10,7 @@ import { useAndroidBackButton } from './hooks/useAndroidBackButton';
 import { useStatusBar } from './hooks/useStatusBar';
 import { useAppLifecycle } from './hooks/useAppLifecycle';
 import { Ziggy } from './ziggy'; // <--- Import file hasil generate
-globalThis.Ziggy = Ziggy;
+Object.assign(globalThis, { Ziggy });
 
 const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
 

@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\Transaction;
 use App\Services\CashierSessionService;
-use App\Services\ClosingReportService;
 use App\Services\DraftService;
 use App\Services\TransactionService;
 use Illuminate\Http\Request;
@@ -35,6 +34,8 @@ class TransactionController extends Controller
 
         $activeDraft = Transaction::draft()
             ->where('user_id', $user->id)
+            ->when($openSession, fn ($query) => $query->where('cashier_session_id', $openSession->id))
+            ->when(! $openSession, fn ($query) => $query->whereRaw('1 = 0'))
             ->latest()
             ->first();
 
@@ -85,6 +86,7 @@ class TransactionController extends Controller
             'cart.*.qty' => 'required|integer|min:1',
             'customer_type' => 'required|in:general,workshop',
             'draft_id' => 'nullable|exists:transactions,id',
+            'cashier_session_id' => 'nullable|integer|min:1',
         ]);
 
         $openSession = $this->sessionService->getOpenSession(auth()->id());
@@ -107,13 +109,17 @@ class TransactionController extends Controller
             return redirect()->route('transactions.create');
         }
 
+        $openSession = $this->sessionService->getOpenSession(auth()->id());
         $draft = Transaction::with(['transactionItems.product', 'user'])
             ->where('id', $draftId)
             ->where('status', 'draft')
             ->where('user_id', auth()->id())
             ->firstOrFail();
 
-        $openSession = $this->sessionService->getOpenSession(auth()->id());
+        if (! $openSession || (int) $draft->cashier_session_id !== $openSession->id) {
+            return redirect()->route('transactions.create')
+                ->withErrors(['session' => 'Draft berasal dari shift yang sudah berakhir dan tidak dapat dialihkan.']);
+        }
 
         return Inertia::render('Transactions/Checkout', [
             'draft' => [
@@ -121,7 +127,6 @@ class TransactionController extends Controller
                 'invoice_number' => $draft->invoice_number,
                 'customer_type' => $draft->customer_type,
                 'total_amount' => (float) $draft->total_amount,
-                'total_profit' => (float) $draft->total_profit,
                 'items' => $draft->transactionItems->map(fn ($item) => [
                     'id' => $item->id,
                     'product_id' => $item->product_id,
@@ -143,6 +148,7 @@ class TransactionController extends Controller
             'cart.*.qty' => 'required|integer|min:1',
             'customer_type' => 'required|in:general,workshop',
             'draft_id' => 'nullable|exists:transactions,id',
+            'cashier_session_id' => 'nullable|integer|min:1',
         ]);
 
         $openSession = $this->sessionService->getOpenSession(auth()->id());
@@ -160,9 +166,15 @@ class TransactionController extends Controller
 
     public function clearDraft(Request $request)
     {
+        $validated = $request->validate([
+            'draft_id' => 'nullable|integer|min:1',
+            'cashier_session_id' => 'nullable|integer|min:1',
+        ]);
+
         $this->draftService->clear(
-            $request->filled('draft_id') ? $request->draft_id : null,
+            $validated['draft_id'] ?? null,
             auth()->id(),
+            isset($validated['cashier_session_id']) ? (int) $validated['cashier_session_id'] : null,
         );
 
         return response()->json(['message' => 'Draft dihapus.']);
@@ -256,11 +268,18 @@ class TransactionController extends Controller
             'opening_notes' => 'nullable|string|max:1000',
         ]);
 
-        $this->sessionService->openSession(
+        $session = $this->sessionService->openSession(
             auth()->id(),
             $validated['opening_cash'],
             $validated['opening_notes'] ?? null,
         );
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'Kasir berhasil dibuka.',
+                'session' => $this->sessionService->buildSessionPayload($session),
+            ]);
+        }
 
         return redirect()->route('transactions.create')->with('success', 'Kasir berhasil dibuka.');
     }
@@ -303,6 +322,7 @@ class TransactionController extends Controller
             'change_amount' => 'required|numeric',
             'customer_type' => 'required|in:general,workshop',
             'draft_id' => 'nullable|exists:transactions,id',
+            'cashier_session_id' => 'required|integer|min:1',
         ]);
 
         try {

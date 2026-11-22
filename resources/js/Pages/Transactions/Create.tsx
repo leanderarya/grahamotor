@@ -1,6 +1,7 @@
 import {
     AppNotifications,
     notifyError,
+    notifySuccess,
     notifyWarning,
 } from '@/Components/app-notifications';
 import { ErrorBoundary } from '@/Components/ErrorBoundary';
@@ -13,10 +14,10 @@ import { ProductCard } from '@/Components/pos/product-card';
 import { SettlementModal } from '@/Components/pos/settlement-modal';
 import { TopBar } from '@/Components/pos/top-bar';
 import { STORE_CONFIG } from '@/config/store';
-import { useNetwork } from '@/hooks/useNetwork';
 import { useVersionCheck } from '@/hooks/useVersionCheck';
 import { isNative } from '@/lib/capacitor';
 import { getProductLabel } from '@/lib/format';
+import { offlineQueue } from '@/lib/offline-queue';
 import type { ClosingReportData } from '@/lib/printer';
 import { productCache } from '@/lib/product-cache';
 import * as posService from '@/services/pos';
@@ -36,6 +37,27 @@ import {
     useRef,
     useState,
 } from 'react';
+
+function getErrorMessage(
+    error: unknown,
+    field: string,
+    fallback: string,
+): string {
+    if (typeof error !== 'object' || error === null) {
+        return error instanceof Error && error.message ? error.message : fallback;
+    }
+
+    const details = error as Record<string, unknown>;
+    const fieldMessage = details[field];
+    if (typeof fieldMessage === 'string') return fieldMessage;
+    if (Array.isArray(fieldMessage) && typeof fieldMessage[0] === 'string') {
+        return fieldMessage[0];
+    }
+
+    return typeof details.message === 'string' && details.message
+        ? details.message
+        : fallback;
+}
 
 export default function TabletPOS({
     products,
@@ -73,12 +95,11 @@ export default function TabletPOS({
     });
     const skipAutoSave = useRef(true); // skip initial render
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const { isOnline } = useNetwork();
     const [closingData, setClosingData] = useState<ClosingReportData | null>(
         null,
     );
     const [showClosingReport, setShowClosingReport] = useState(false);
-    const [autoSaveFailedCount, setAutoSaveFailedCount] = useState(0);
+    const autoSaveFailedCount = useRef(0);
     const [offlineProducts, setOfflineProducts] = useState<Product[]>([]);
     const { needsUpdate, latestVersion } = useVersionCheck();
 
@@ -112,6 +133,59 @@ export default function TabletPOS({
     }, [cashierSession]);
 
     useEffect(() => {
+        const cutoffAt = sessionState?.overdue_at
+            ? Date.parse(sessionState.overdue_at)
+            : Number.NaN;
+        if (
+            !Number.isFinite(cutoffAt) ||
+            sessionState?.is_overdue ||
+            cutoffAt > 2_147_483_647 + Date.now()
+        ) {
+            return;
+        }
+
+        const lockSession = () => {
+            setSessionState((current) =>
+                current ? { ...current, is_overdue: true } : current,
+            );
+        };
+        const delay = cutoffAt - Date.now();
+        if (delay <= 0) {
+            lockSession();
+            return;
+        }
+
+        const timer = window.setTimeout(lockSession, delay);
+        return () => window.clearTimeout(timer);
+    }, [sessionState?.is_overdue, sessionState?.overdue_at]);
+
+    useEffect(() => {
+        return offlineQueue.autoSyncOnNetworkRestore(
+            (payload) => posService.processPayment(payload),
+            {
+                userId: auth.user.id,
+                sessionId: sessionState?.id ?? null,
+                isOverdue: Boolean(sessionState?.is_overdue),
+            },
+            ({ sent, failed }) => {
+                if (sent > 0) {
+                    notifySuccess(
+                        `${sent} transaksi offline berhasil dikirim.`,
+                        'Sinkronisasi selesai',
+                    );
+                }
+
+                if (failed > 0) {
+                    notifyError(
+                        `${failed} transaksi offline tidak dapat dikonfirmasi. Jangan input ulang sebelum Owner memeriksa riwayat transaksi.`,
+                        'Periksa transaksi offline',
+                    );
+                }
+            },
+        );
+    }, [auth.user.id, sessionState?.id, sessionState?.is_overdue]);
+
+    useEffect(() => {
         if (activeDraftData && activeDraftData.transaction_items) {
             const restoredCart = activeDraftData.transaction_items.map(
                 (item) => ({
@@ -132,6 +206,7 @@ export default function TabletPOS({
     useEffect(() => {
         if (skipAutoSave.current) return;
         if (!sessionState) return;
+        if (sessionState.is_overdue) return;
 
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
 
@@ -139,10 +214,14 @@ export default function TabletPOS({
             if (data.cart.length === 0) {
                 // Keranjang kosong → hapus draft dari DB
                 try {
-                    await posService.clearDraft(draftId);
+                    await posService.clearDraft(draftId, sessionState.id ?? null);
                     setDraftId(null);
-                    setAutoSaveFailedCount(0);
-                } catch (_) {}
+                    autoSaveFailedCount.current = 0;
+                } catch {
+                    notifyError(
+                        'Draft belum dapat dihapus. Coba lagi setelah koneksi pulih.',
+                    );
+                }
                 return;
             }
 
@@ -152,20 +231,17 @@ export default function TabletPOS({
                     data.cart.map((item) => ({ id: item.id, qty: item.qty })),
                     customerType,
                     draftId,
+                    sessionState.id ?? null,
                 );
                 if (result?.draft_id) setDraftId(result.draft_id);
-                setAutoSaveFailedCount(0);
-            } catch (_) {
-                setAutoSaveFailedCount((prev) => {
-                    const next = prev + 1;
-                    // Show toast after 3 consecutive failures
-                    if (next >= 3) {
-                        notifyError(
-                            'Auto-save gagal. Pastikan koneksi internet stabil.',
-                        );
-                    }
-                    return next;
-                });
+                autoSaveFailedCount.current = 0;
+            } catch {
+                autoSaveFailedCount.current += 1;
+                if (autoSaveFailedCount.current >= 3) {
+                    notifyError(
+                        'Auto-save gagal. Pastikan koneksi internet stabil.',
+                    );
+                }
             }
         }, 800);
 
@@ -175,6 +251,8 @@ export default function TabletPOS({
     }, [data.cart, customerType, sessionState, draftId]);
 
     const hasOpenSession = Boolean(sessionState?.id);
+    const isShiftOverdue = Boolean(sessionState?.is_overdue);
+    const sessionCanTransact = hasOpenSession && !isShiftOverdue;
     const isWorkshop = customerType === 'workshop';
     const deferredSearch = useDeferredValue(search);
 
@@ -288,6 +366,14 @@ export default function TabletPOS({
 
     const addToCart = useCallback(
         (product: Product) => {
+            if (isShiftOverdue) {
+                notifyWarning(
+                    'Shift melewati batas 00.00 WIB. Hubungi Admin atau Owner untuk menutup shift.',
+                    'Transaksi dihentikan',
+                );
+                return;
+            }
+
             if (!hasOpenSession) {
                 setShowOpenSessionModal(true);
                 return;
@@ -318,11 +404,13 @@ export default function TabletPOS({
 
             setData('cart', [...data.cart, { ...product, qty: 1 } as CartItem]);
         },
-        [data.cart, hasOpenSession, setData],
+        [data.cart, hasOpenSession, isShiftOverdue, setData],
     );
 
     const updateQty = useCallback(
         (id: number, delta: number) => {
+            if (isShiftOverdue) return;
+
             const item = data.cart.find((i) => i.id === id);
             if (!item) return;
 
@@ -354,50 +442,55 @@ export default function TabletPOS({
                 ),
             );
         },
-        [data.cart, productById, setData],
+        [data.cart, isShiftOverdue, productById, setData],
     );
 
     const removeItem = useCallback(
         (id: number) => {
+            if (isShiftOverdue) return;
+
             setData(
                 'cart',
                 data.cart.filter((item) => item.id !== id),
             );
         },
-        [data.cart, setData],
+        [data.cart, isShiftOverdue, setData],
     );
 
     const clearCart = useCallback(() => {
+        if (isShiftOverdue) return;
+
         setData('cart', []);
         // Langsung hapus draft dari DB, jangan lewat debounce
         posService
-            .clearDraft(draftId)
+            .clearDraft(draftId, sessionState?.id ?? null)
             .then(() => setDraftId(null))
             .catch(() => {});
-    }, [setData, draftId]);
+    }, [setData, draftId, isShiftOverdue, sessionState?.id]);
 
     const handleOpenSession = useCallback(async () => {
         setIsOpeningSession(true);
 
         try {
-            await posService.openSession(
+            const openedSession = await posService.openSession(
                 Number(openingCash || 0),
                 openingNotes,
             );
-            setSessionState({
-                id: Date.now(),
-                opening_cash: Number(openingCash || 0),
-                cash_sales_total: 0,
-                non_cash_sales_total: 0,
-                transactions_count: 0,
-                opened_at: new Date().toISOString(),
-            });
+            if (!openedSession) {
+                throw new Error('Server tidak mengembalikan sesi kasir yang baru dibuka.');
+            }
+
+            setSessionState(openedSession);
             setOpeningCash('');
             setOpeningNotes('');
             setShowOpenSessionModal(false);
-        } catch (error: any) {
+        } catch (error: unknown) {
             notifyError(
-                error?.opening_cash || error?.message || 'Gagal membuka kasir.',
+                getErrorMessage(
+                    error,
+                    'opening_cash',
+                    'Gagal membuka kasir.',
+                ),
             );
         } finally {
             setIsOpeningSession(false);
@@ -405,6 +498,14 @@ export default function TabletPOS({
     }, [openingCash, openingNotes]);
 
     const handleCloseSession = useCallback(async () => {
+        if (isShiftOverdue) {
+            notifyWarning(
+                'Shift melewati batas 00.00 WIB. Minta Admin atau Owner menutup shift.',
+                'Override diperlukan',
+            );
+            return;
+        }
+
         if (data.cart.length > 0) {
             notifyWarning(
                 'Kosongkan keranjang sebelum tutup kasir.',
@@ -433,18 +534,28 @@ export default function TabletPOS({
             setShowClosingReport(true);
             reset();
             setSearch('');
-        } catch (error: any) {
+        } catch (error: unknown) {
             notifyError(
-                error?.closing_cash_physical ||
-                    error?.message ||
+                getErrorMessage(
+                    error,
+                    'closing_cash_physical',
                     'Gagal menutup kasir.',
+                ),
             );
         } finally {
             setIsClosingSession(false);
         }
-    }, [data.cart.length, closingCashPhysical, closingNotes, reset, setSearch]);
+    }, [data.cart.length, closingCashPhysical, closingNotes, isShiftOverdue, reset, setSearch]);
 
     const handleSaveDraft = useCallback(async () => {
+        if (isShiftOverdue) {
+            notifyWarning(
+                'Shift melewati batas 00.00 WIB. Draft baru tidak dapat disimpan.',
+                'Transaksi dihentikan',
+            );
+            return;
+        }
+
         if (data.cart.length === 0) return;
 
         try {
@@ -452,12 +563,15 @@ export default function TabletPOS({
                 data.cart.map((item) => ({ id: item.id, qty: item.qty })),
                 customerType,
                 draftId,
+                sessionState?.id ?? null,
             );
             // posService.saveDraft handles both web (Inertia redirect) and native paths
-        } catch (error: any) {
-            notifyError(error?.message || 'Gagal menyimpan draft.');
+        } catch (error: unknown) {
+            notifyError(
+                getErrorMessage(error, 'message', 'Gagal menyimpan draft.'),
+            );
         }
-    }, [data.cart, customerType, draftId]);
+    }, [data.cart, customerType, draftId, isShiftOverdue, sessionState?.id]);
 
     return (
         <ErrorBoundary>
@@ -485,11 +599,27 @@ export default function TabletPOS({
                     hasOpenSession={hasOpenSession}
                     userName={auth?.user?.name || ''}
                     onSettlementClick={() =>
-                        hasOpenSession
+                        isShiftOverdue
+                            ? notifyWarning(
+                                  'Shift melewati batas 00.00 WIB. Minta Admin atau Owner menutup shift.',
+                                  'Override diperlukan',
+                              )
+                            : hasOpenSession
                             ? setShowSettlementModal(true)
                             : setShowOpenSessionModal(true)
                     }
                 />
+
+                {isShiftOverdue && (
+                    <div
+                        role="status"
+                        className="border-b border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950"
+                    >
+                        Shift melewati batas 00.00 WIB. Penjualan dan draft
+                        dihentikan. Hubungi Admin atau Owner untuk menutup
+                        shift.
+                    </div>
+                )}
 
                 {/* Product list and desktop checkout */}
                 <div className="flex min-h-0 flex-1 overflow-hidden pb-24 lg:pb-0">
@@ -540,7 +670,7 @@ export default function TabletPOS({
                             totalAmount={totalAmount}
                             totalQty={totalQty}
                             isWorkshop={isWorkshop}
-                            hasOpenSession={hasOpenSession}
+                            hasOpenSession={sessionCanTransact}
                             customerType={customerType}
                             onCustomerTypeChange={setCustomerType}
                             onSaveDraft={handleSaveDraft}
@@ -554,7 +684,12 @@ export default function TabletPOS({
                     hasOpenSession={hasOpenSession}
                     onToggleCheckout={() => setShowMobileCheckout(true)}
                     onSessionButtonClick={() =>
-                        hasOpenSession
+                        isShiftOverdue
+                            ? notifyWarning(
+                                  'Shift melewati batas 00.00 WIB. Minta Admin atau Owner menutup shift.',
+                                  'Override diperlukan',
+                              )
+                            : hasOpenSession
                             ? setShowSettlementModal(true)
                             : setShowOpenSessionModal(true)
                     }
@@ -581,7 +716,7 @@ export default function TabletPOS({
                                 totalAmount={totalAmount}
                                 totalQty={totalQty}
                                 isWorkshop={isWorkshop}
-                                hasOpenSession={hasOpenSession}
+                                hasOpenSession={sessionCanTransact}
                                 customerType={customerType}
                                 onCustomerTypeChange={setCustomerType}
                                 onSaveDraft={handleSaveDraft}

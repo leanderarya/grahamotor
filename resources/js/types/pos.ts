@@ -43,6 +43,8 @@ export interface CashierSession {
     non_cash_sales_total?: number | string;
     transactions_count?: number;
     opened_at?: string;
+    is_overdue?: boolean;
+    overdue_at?: string;
 }
 
 // ── Draft ────────────────────────────────────────────────────────────────────

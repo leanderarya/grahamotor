@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Transaction;
-use App\Services\DraftService;
 use App\Services\CashierSessionService;
+use App\Services\DraftService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -25,6 +25,7 @@ class DraftController extends Controller
             'cart.*.qty' => 'required|integer|min:1',
             'customer_type' => 'required|in:general,workshop',
             'draft_id' => 'nullable|exists:transactions,id',
+            'cashier_session_id' => 'nullable|integer|min:1',
         ]);
 
         $openSession = $this->sessionService->getOpenSession(auth()->id());
@@ -52,6 +53,7 @@ class DraftController extends Controller
             'cart.*.qty' => 'required|integer|min:1',
             'customer_type' => 'required|in:general,workshop',
             'draft_id' => 'nullable|exists:transactions,id',
+            'cashier_session_id' => 'nullable|integer|min:1',
         ]);
 
         $openSession = $this->sessionService->getOpenSession(auth()->id());
@@ -69,9 +71,15 @@ class DraftController extends Controller
 
     public function clear(Request $request): JsonResponse
     {
+        $validated = $request->validate([
+            'draft_id' => 'nullable|integer|min:1',
+            'cashier_session_id' => 'nullable|integer|min:1',
+        ]);
+
         $this->draftService->clear(
-            $request->filled('draft_id') ? (int) $request->draft_id : null,
+            isset($validated['draft_id']) ? (int) $validated['draft_id'] : null,
             auth()->id(),
+            isset($validated['cashier_session_id']) ? (int) $validated['cashier_session_id'] : null,
         );
 
         return response()->json(['message' => 'Draft dihapus.']);

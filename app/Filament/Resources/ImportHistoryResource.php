@@ -25,6 +25,11 @@ class ImportHistoryResource extends Resource
 
     protected static ?int $navigationSort = 3;
 
+    public static function canViewAny(): bool
+    {
+        return auth()->user()?->isOwner() ?? false;
+    }
+
     public static function form(Form $form): Form
     {
         return $form
